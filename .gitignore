@@ -1,0 +1,49 @@
+# Environment / secrets — never commit these
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*credentials*
+*secret*
+tokens.json
+tokens*.json
+.credentials.json
+auth.json
+
+# Data / databases / logs
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.log
+chat_data/
+uploads/
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+build/
+dist/
+venv/
+.venv/
+env/
+
+# Node
+node_modules/
+
+# Backups / temp / editor / OS
+*.bak
+*.bak.*
+*.orig
+*.tmp
+*~
+.DS_Store
+.vscode/
+.idea/
+*.swp
