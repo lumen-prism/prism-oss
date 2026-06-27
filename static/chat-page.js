@@ -2625,7 +2625,7 @@ async function _sendAskKeys(keys, pace) {
       body: JSON.stringify(body),
     });
     if (r.status === 401) {
-      localStorage.removeItem('echo_token');
+      localStorage.removeItem('prism_token');
       TOKEN = '';
       if (typeof showLogin === 'function') showLogin();
       return false;

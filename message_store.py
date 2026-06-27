@@ -510,10 +510,11 @@ def _codex_patch_path(arguments):
     return match.group(1).strip() if match else ""
 
 
+_TG_INBOX_DIR = os.path.expanduser("~/.claude/channels/telegram/inbox")
 _CODEX_IMAGE_PATH_RE = re.compile(
     r"@?("
     r"(?:/tmp/dashboard-uploads/[^\s<>\"']+"
-    r"|/home/ubuntu/\.claude/channels/telegram/inbox/[^\s<>\"']+"
+    r"|" + re.escape(_TG_INBOX_DIR) + r"/[^\s<>\"']+"
     r"|" + re.escape(str(_INBOX_DIR)) + r"/[^\s<>\"']+"
     r"|/[^\s<>\"']+"
     r"|(?:\./)?[A-Za-z0-9._-]+/[^\s<>\"']+)"
@@ -980,7 +981,11 @@ _URL_RE = re.compile(
 _UPLOAD_RE = re.compile(r"@?(/tmp/dashboard-uploads/([^/\s]+)/([^\s<>\"']+))", re.I)
 # Absolute paths the Telegram MCP plugin pastes when forwarding photo messages
 # (CC JSONLs include the on-disk path, not a URL; we resolve via /api/telegram/inbox/).
-_TG_IMAGE_RE = re.compile(r"@?(/home/ubuntu/\.claude/channels/telegram/inbox/([^\s<>\"']+\.(?:png|jpg|jpeg|gif|webp|heic)))", re.I)
+# Built off $HOME so the regex works for any user who installs Prism.
+_TG_IMAGE_RE = re.compile(
+    r"@?(" + re.escape(_TG_INBOX_DIR) + r"/([^\s<>\"']+\.(?:png|jpg|jpeg|gif|webp|heic)))",
+    re.I,
+)
 _IMG_EXT_RE = re.compile(r'\.(png|jpg|jpeg|gif|webp|svg|bmp|heic)$', re.I)
 _FILE_EXT_RE = re.compile(r'\.(pdf|doc|docx|xls|xlsx|ppt|pptx|zip|tar|gz|md|html|csv|txt|py|js|ts|json|yaml|yml|sh)$', re.I)
 _CJK_RE = re.compile(r"[㐀-鿿]")
