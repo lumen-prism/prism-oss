@@ -1923,6 +1923,30 @@ function openChatActionSheet(s, anchorEl) {
     if (p && p.parentElement !== document.body) document.body.appendChild(p);
     if (typeof menuEffort === 'function') menuEffort();
   });
+  const tgBtn = document.getElementById('as-tg');
+  const tgBadge = document.getElementById('as-tg-badge');
+  if (tgBtn) tgBtn.style.display = (s.kind === 'cc') ? '' : 'none';
+  const paintTgBadge = () => {
+    if (!tgBtn || !tgBadge) return;
+    const holder = typeof _tgHolder !== 'undefined' ? _tgHolder : null;
+    if (holder === s.name) {
+      tgBadge.textContent = '● 已挂载';
+      tgBadge.style.color = '#6a8a5a';
+    } else {
+      tgBadge.textContent = holder ? '挂在 ' + holder : '';
+      tgBadge.style.color = '';
+    }
+  };
+  paintTgBadge();
+  // prism-oss has no console panel periodically refreshing _tgHolder, so pull
+  // fresh status when the sheet opens and repaint the badge.
+  if (s.kind === 'cc' && typeof refreshTelegramStatus === 'function') {
+    refreshTelegramStatus().then(paintTgBadge).catch(() => {});
+  }
+  bind('as-tg', () => {
+    activeSession = s.name; activeChat = s.name;
+    if (typeof menuTransferTelegram === 'function') menuTransferTelegram();
+  });
   bind('as-rename', () => openChatEdit(s));
   bind('as-archive', () => confirmArchive(s.name, chatDisplayLabel(s)));
   bind('as-delete',  () => confirmDelete(s.name, chatDisplayLabel(s)));

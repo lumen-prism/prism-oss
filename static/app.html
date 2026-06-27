@@ -5710,6 +5710,11 @@ html[data-appearance="dark"] body.sketch .btn-secondary {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 113 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
         Rename
       </button>
+      <button class="as-item cc-only" id="as-tg">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2m4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 0 0-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.74-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38"/></svg>
+        Telegram
+        <span class="as-badge" id="as-tg-badge"></span>
+      </button>
       <div class="as-sep"></div>
       <button class="as-item" id="as-archive">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 001 1h12a1 1 0 001-1V8"/><line x1="10" y1="13" x2="14" y2="13"/></svg>
@@ -7717,7 +7722,11 @@ function openActionSheet(s, anchorEl) {
   };
   const archiveItem = document.getElementById('as-archive');
   archiveItem.style.display = '';
+  const tgBtn = document.getElementById('as-tg');
+  if (tgBtn) tgBtn.style.display = (s.kind === 'cc') ? '' : 'none';
+  _updateTelegramBadge(document.getElementById('as-tg-badge'), s.name);
   bind('as-rename', () => openTitleEdit(s.name, s.display_name));
+  bind('as-tg', () => { activeSession = s.name; menuTransferTelegram(); });
   bind('as-archive', () => confirmArchive(s.name, s.display_name || s.name));
   bind('as-delete', () => confirmDelete(s.name, s.display_name || s.name));
   sheet.classList.add('open');

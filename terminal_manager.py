@@ -902,6 +902,22 @@ _CHAT_INPUT_SENT_AT_RE = re.compile(r'<chat-input\b[^>]*\bsent_at="(?P<ts>[^"]+)
 _PRISM_DATA_DIR = Path(os.path.expanduser(os.environ.get("PRISM_DATA_DIR", "~/.local/share/prism")))
 _LATEST_COMPACTION_CACHE = {}
 _COMPACTING_PANE_RE = re.compile(r"(?:Compacting|Compacting conversation|Compacting context)", re.IGNORECASE)
+_TELEGRAM_REPLY_TOOLS = {
+    "mcp__plugin_telegram_telegram__reply",
+    "mcp__plugin_telegram_telegram__edit_message",
+}
+
+
+def _is_displayable_queued_prompt(prompt) -> bool:
+    """A queued prompt worth showing as a chat bubble. Channel / chat-input
+    messages always count; plain text typed in the terminal while Claude was
+    working is real user input too (else it would vanish mid-turn). Slash
+    commands are terminal control, not chat, so they stay hidden."""
+    if not isinstance(prompt, str) or not prompt.strip():
+        return False
+    if "<channel" in prompt or "<chat-input" in prompt:
+        return True
+    return not prompt.lstrip().startswith("/")
 _TOOL_USE_SUMMARY = {
     "Read":   ("path",        "📄 Read {}"),
     "Edit":   ("file_path",   "✏️ Edit {}"),
@@ -1051,6 +1067,16 @@ def _extract_blocks(obj: dict, session: str, tool_done_ids: set, ask_answers: Op
                 if thinking:
                     blocks.append({"type": "thinking", "text": thinking, "done": True})
             elif t == "tool_use" and role == "assistant":
+                if b.get("name") in _TELEGRAM_REPLY_TOOLS:
+                    # Render the Telegram reply as its actual text + a delivery
+                    # mark, not a generic "called a tool" row.
+                    flush_group()
+                    reply_text = ((b.get("input") or {}).get("text") or "").strip()
+                    if reply_text:
+                        blocks.extend(_text_to_blocks(reply_text, session))
+                        delivery_label = "已编辑 Telegram 消息" if b.get("name", "").endswith("edit_message") else "已回复到 Telegram"
+                        blocks.append({"type": "delivery", "channel": "telegram", "label": delivery_label})
+                    continue
                 if pending_group is None:
                     pending_group = {"type": "tool_group", "tools": []}
                 tid = b.get("id")
@@ -1088,6 +1114,13 @@ def _extract_blocks(obj: dict, session: str, tool_done_ids: set, ask_answers: Op
 
     if not blocks:
         return None
+    # Tag inbound Telegram messages so the chat shows a "来自 Telegram" mark.
+    if role == "user":
+        raw = content if isinstance(content, str) else " ".join(
+            b.get("text") or "" for b in (content or []) if isinstance(b, dict) and b.get("type") == "text"
+        )
+        if "<channel" in raw and ("telegram" in raw or "plugin:telegram" in raw):
+            blocks.append({"type": "delivery", "channel": "telegram", "label": "来自 Telegram"})
     return role, blocks, _chat_message_ts(obj, role, content), obj.get("uuid")
 
 
@@ -1417,6 +1450,11 @@ def read_chat_messages_from_jsonl(jsonl: Path, session_label: str, limit: int = 
         out = []
         seen_channel_ids = set()
         compact_metadata = {}
+        # Contents that have settled into a real turn — a user message or a
+        # queued_command attachment. A pending enqueue whose content is already
+        # here has been processed, so render the settled form and skip the
+        # enqueue (avoids double-rendering a terminal-queued message).
+        settled_queue_contents = set()
         for ln in raw_lines:
             try:
                 boundary = json.loads(ln)
@@ -1424,6 +1462,14 @@ def read_chat_messages_from_jsonl(jsonl: Path, session_label: str, limit: int = 
                 continue
             if boundary.get("type") == "system" and boundary.get("subtype") == "compact_boundary" and boundary.get("uuid"):
                 compact_metadata[boundary["uuid"]] = boundary.get("compactMetadata") or {}
+            elif boundary.get("type") == "user":
+                qc = (boundary.get("message") or {}).get("content")
+                if isinstance(qc, str):
+                    settled_queue_contents.add(qc)
+            elif boundary.get("type") == "attachment":
+                qa = boundary.get("attachment") or {}
+                if qa.get("type") == "queued_command" and isinstance(qa.get("prompt"), str):
+                    settled_queue_contents.add(qa["prompt"])
         for ln in raw_lines:
             try:
                 obj = json.loads(ln)
@@ -1432,10 +1478,24 @@ def read_chat_messages_from_jsonl(jsonl: Path, session_label: str, limit: int = 
             if obj.get("isCompactSummary"):
                 obj = dict(obj)
                 obj["_compact_metadata"] = compact_metadata.get(obj.get("parentUuid"), {})
+            if obj.get("type") == "queue-operation" and obj.get("operation") == "enqueue":
+                # A message typed in the terminal while Claude is working is held
+                # as a pending enqueue before it settles into a user turn / a
+                # queued_command attachment. Render the still-pending ones so they
+                # don't vanish mid-turn; once settled, the settled form renders
+                # (content in settled_queue_contents) so it never double-shows.
+                qcontent = obj.get("content")
+                if (isinstance(qcontent, str) and _is_displayable_queued_prompt(qcontent)
+                        and qcontent not in settled_queue_contents):
+                    obj = dict(obj)
+                    obj["type"] = "user"
+                    obj["message"] = {"content": qcontent}
+                else:
+                    continue
             if obj.get("type") == "attachment":
                 attachment = obj.get("attachment") or {}
                 prompt = attachment.get("prompt") if attachment.get("type") == "queued_command" else None
-                if isinstance(prompt, str) and "<channel" in prompt:
+                if _is_displayable_queued_prompt(prompt):
                     obj = dict(obj)
                     obj["type"] = "user"
                     obj["message"] = {"content": prompt}
