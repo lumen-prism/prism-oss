@@ -30,6 +30,11 @@ let _chRenderQueuedKey = null;
 const _CH_REVEAL_TICK_MS = 85;
 const _CH_REVEAL_MIN_CHARS = 8;
 const _CH_REVEAL_MAX_CHARS = 44;
+// Cap the reveal animation so opening a long chat doesn't hog the main thread:
+// only animate when the current view has at most _CH_REVEAL_MAX_MESSAGES entries,
+// and skip per-message text reveal once a single block exceeds _CH_REVEAL_MAX_TEXT_CHARS.
+const _CH_REVEAL_MAX_MESSAGES = 40;
+const _CH_REVEAL_MAX_TEXT_CHARS = 1200;
 const _CH_SEARCH_HIGHLIGHT_MS = 5200;
 let _chRevealTimer = null;
 let _chRevealSession = null;
@@ -69,6 +74,10 @@ let chViewingUnified = null;    // unified store session_id when viewing from me
 // restore the pin when returning to the chats tab — iOS Safari can reset
 // scrollTop on display:none/flex toggles.
 let _chWasAtBottom = true;
+// Timestamp of the user's most recent scroll-away. Lets _chPinChatBottomSoon
+// decide whether an SSE-triggered re-render should still try to pin to bottom
+// or back off because the user has scrolled to read history.
+let _chUserScrolledAwayAt = 0;
 
 // === Search: global on Chats list and scoped inside one conversation ===
 let _chSearchTimer = null;
@@ -142,12 +151,18 @@ function _chQueueNewReplyReveal(name, messages) {
     return;
   }
   if (_chPendingLoadEarlier || _chLiveFocusSourceUuid || _chLiveFocusMessageId) return;
+  // Don't animate at all when the chat is already long — the reveal tick is
+  // O(n) per message, and stacking dozens makes opening the chat lag. Also
+  // skip reveal for any single text block longer than the per-block cap so a
+  // single huge code-paste reply doesn't strobe-paint for ages.
+  const revealEnabled = (messages || []).length <= _CH_REVEAL_MAX_MESSAGES;
   messages.forEach((message, index) => {
     const key = _chMessageKey(message, index);
     if (_chSeenLiveMessages.has(key)) return;
     _chSeenLiveMessages.add(key);
+    if (!revealEnabled) return;
     const text = message.role === 'assistant' ? _chAssistantText(message) : '';
-    if (!text) return;
+    if (!text || text.length > _CH_REVEAL_MAX_TEXT_CHARS) return;
     const shown = _chNextRevealEnd(text, 0);
     _chRevealStates.set(key, {
       text,
@@ -208,6 +223,7 @@ function _chPendingAdd(session, text, attachments, options = {}) {
     attachments: attachments || [],
     createdAt,
     ts: new Date(createdAt).toISOString(),
+    sentAt: options.sentAt || null,
     status: 'sending',
     sendMode: options.sendMode || _chCurrentSendMode(),
     placement: options.placement || ((options.sendMode || _chCurrentSendMode()) === 'direct' ? 'terminalTail' : 'queueTail'),
@@ -234,11 +250,25 @@ function _chInvalidateLiveChat(name, options = {}) {
   lastChatFingerprint = null;
   if (options.pinBottom) _chPendingPinBottom = true;
 }
+function _chIsNearBottom(wrap = document.getElementById('chMsgs'), threshold = 80) {
+  if (!wrap) return false;
+  return (wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight) < threshold;
+}
+function _chCacheableLiveData(data) {
+  if (!data || !data.terminal_prompt) return data;
+  // Terminal prompts are live pane state, not transcript state. Keeping them in
+  // the message cache can resurrect an old confirmation card after the prompt
+  // has already disappeared.
+  return { ...data, terminal_prompt: null };
+}
 function _chScheduleReceiptPolls(session = activeChat) {
   const targetSession = session;
-  [300, 800, 1600, 3000].forEach(delay => setTimeout(() => {
+  [300, 800, 1600, 3000, 6000, 10000, 15000, 30000, 60000, 120000].forEach(delay => setTimeout(() => {
     if (chSub !== 'detail' || !targetSession || activeChat !== targetSession) return;
-    _chInvalidateLiveChat(targetSession, { pinBottom: true });
+    // Only auto-scroll back to bottom if the user was already there; otherwise
+    // an SSE-triggered re-render shouldn't yank them away from what they were
+    // reading mid-history.
+    _chInvalidateLiveChat(targetSession, { pinBottom: _chIsNearBottom() });
     renderChatMessages(targetSession);
   }, delay));
 }
@@ -383,6 +413,8 @@ async function _chSubmitPrivateMessage(pending) {
     .map(attachment => '@/tmp/dashboard-uploads/' + attachment.session + '/' + attachment.fname)
     .join(' ');
   const sentAt = new Date().toISOString();
+  pending.sentAt = sentAt;
+  _chSavePendingMessages();
   const taggedText = '<chat-input source="prism-chat" sent_at="' + sentAt + '" />\n' + (pending.text || '');
   const payload = prefix ? prefix + ' ' + taggedText : taggedText;
   const endpoint = pending.sendMode === 'direct' ? '/input' : '/chat-send';
@@ -398,8 +430,20 @@ async function _chSubmitPrivateMessage(pending) {
       if (typeof showLogin === 'function') showLogin();
       return { ok: false };
     }
-    if (!response.ok) return { ok: false };
     const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      // Server returns 409 when the CC pane is currently parked on a blocking
+      // prompt (yes/no, file confirm, etc.) — the message can't be sent until
+      // the user answers it. Surface the prompt so the chat shows the
+      // interactive card and the pending bubble flips to a "blocked" hint
+      // instead of a bare "send failed".
+      if (response.status === 409 && data && data.error === 'blocked_by_terminal_prompt') {
+        _chInvalidateLiveChat(pending.session, { pinBottom: true });
+        if (activeChat === pending.session) setTimeout(() => renderChatMessages(pending.session), 80);
+        return { ok: false, blocked: true, terminalPrompt: data.terminal_prompt || null };
+      }
+      return { ok: false };
+    }
     return { ok: true, queued: Boolean(data.queued), direct: pending.sendMode === 'direct' };
   } catch (error) {
     console.warn('chat send failed', error);
@@ -434,7 +478,7 @@ async function _chRetryPending(pending) {
   const result = await _chSubmitPrivateMessage(replacement);
   _sendInFlight = false;
   if (send) send.disabled = false;
-  _chPendingUpdate(replacement.id, result.ok ? (result.direct ? 'direct' : (result.queued ? 'queued' : 'pending')) : (result.unconfirmed ? 'unconfirmed' : 'failed'));
+  _chPendingUpdate(replacement.id, result.ok ? (result.direct ? 'direct' : (result.queued ? 'queued' : 'pending')) : (result.blocked ? 'blocked' : (result.unconfirmed ? 'unconfirmed' : 'failed')));
   _chShowPendingImmediately(replacement);
   if (result.ok) {
     if (clearMirroredDraft) {
@@ -462,18 +506,31 @@ function _chMessageText(message) {
 }
 function _chPendingMatchesMessage(pending, message) {
   if (message.role !== 'user') return false;
-  const messageMs = _chParseTs(message.ts) * 1000;
-  if (messageMs && messageMs < pending.createdAt - 5000) return false;
-  if (messageMs && messageMs > pending.createdAt + 10 * 60 * 1000) return false;
+  const messageSec = _chParseTs(message.ts);
+  const messageMs = messageSec * 1000;
+  // sent_at is the timestamp we baked into the outgoing <chat-input> tag — if
+  // the message we're checking carries the same timestamp (within 5s) it's
+  // unambiguously the receipt for this pending entry, even when the text is
+  // long or the user sent several near-identical messages in a row.
+  const sentAtSec = _chParseTs(pending.sentAt);
+  const exactSentAt = sentAtSec && messageSec && Math.abs(messageSec - sentAtSec) <= 5;
   const wanted = _chNormalizePendingText(pending.text);
   const actual = _chNormalizePendingText(_chMessageText(message));
-  if (wanted && wanted !== actual && !_chPendingTextCloseEnough(wanted, actual)) return false;
+  const textMatch = wanted && (wanted === actual || _chPendingTextCloseEnough(wanted, actual));
+  // Only fall back to the wide createdAt window when neither sent_at nor text
+  // gave us a hit — otherwise an exact sent_at match arriving outside the
+  // window would be wrongly rejected.
+  if (!exactSentAt && !textMatch) {
+    if (messageMs && messageMs < pending.createdAt - 5000) return false;
+    if (messageMs && messageMs > pending.createdAt + 10 * 60 * 1000) return false;
+  }
+  if (wanted && !textMatch && !exactSentAt) return false;
   const fileNames = (message.blocks || []).map(block => block.fname || '').filter(Boolean);
   const attachmentNames = (pending.attachments || []).map(attachment => attachment.fname);
   if (attachmentNames.length && !attachmentNames.every(name => fileNames.includes(name) || _chMessageText(message).includes(name))) {
     return false;
   }
-  return Boolean(wanted || attachmentNames.length);
+  return Boolean(textMatch || attachmentNames.length || exactSentAt);
 }
 
 function _chPendingTextCloseEnough(wanted, actual) {
@@ -819,6 +876,7 @@ function _displaySender(sender) {
 function _cleanSearchSnippet(content) {
   return (content || '')
     .replace(/@?\/tmp\/dashboard-uploads\/[^\s]+/gi, '')
+    .replace(/@?\/home\/ubuntu\/\.claude\/channels\/telegram\/inbox\/[^\s]+/gi, '')
     .replace(/\s+/g, ' ').trim();
 }
 function _resourceUrl(resource) {
@@ -2089,14 +2147,19 @@ function updateChScrollBottomBtn() {
   const wrap = document.getElementById('chMsgs');
   const btn = document.getElementById('chScrollBottom');
   if (!wrap || !btn) return;
-  const atBottom = (wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight) < 80;
+  const atBottom = _chIsNearBottom(wrap);
   _chWasAtBottom = atBottom;
+  if (!atBottom) _chUserScrolledAwayAt = Date.now();
   btn.style.display = atBottom ? 'none' : 'flex';
 }
 
 function _chPinChatBottomSoon(wrap = document.getElementById('chMsgs')) {
   if (!wrap) return;
+  const startedAt = Date.now();
   const pin = () => {
+    // If the user scrolled away mid-pin (e.g. an SSE event landed while they
+    // were scrolling history), respect their intent and bail out.
+    if (_chUserScrolledAwayAt > startedAt && !_chIsNearBottom(wrap, 24)) return;
     wrap.scrollTop = wrap.scrollHeight;
     updateChScrollBottomBtn();
   };
@@ -2444,28 +2507,36 @@ function _buildAskCard(tool) {
       optsWrap.appendChild(typeBtn);
     }
 
-    // Already-answered + the answer doesn't match any preset option → user
-    // wrote their own text via "Type something". Surface it so the card
-    // actually shows what they wrote.
+    // Surface "Type something" custom answers in two cases:
+    //   1. Server has committed the answer (serverAnswered) — read from serverAnswers.
+    //   2. User typed locally for an earlier question that's now locked — read
+    //      from state.sent[qIdx] so they don't lose sight of their own answer
+    //      while filling in later questions.
+    const renderCustomAnswer = (custom) => {
+      const row = document.createElement('div');
+      row.className = 'ch-ask-opt ch-ask-opt-type picked';
+      row.innerHTML =
+        '<span class="ch-ask-opt-num">✍️</span>' +
+        '<span class="ch-ask-opt-body">' +
+          '<span class="ch-ask-opt-desc">自己写的</span>' +
+          '<span class="ch-ask-opt-label"></span>' +
+        '</span>' +
+        '<span class="ch-ask-opt-check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>';
+      row.querySelector('.ch-ask-opt-label').textContent = custom;
+      optsWrap.appendChild(row);
+    };
     if (serverAnswered) {
       const ans = serverAnswers[q.question] || serverAnswers[q.header];
       if (ans) {
         const ansList = Array.isArray(ans) ? ans : String(ans).split(/,\s*/);
         const optLabels = new Set(opts.map(o => o.label));
-        ansList.filter(a => a && !optLabels.has(a)).forEach(custom => {
-          const row = document.createElement('div');
-          row.className = 'ch-ask-opt ch-ask-opt-type picked';
-          row.innerHTML =
-            '<span class="ch-ask-opt-num">✍️</span>' +
-            '<span class="ch-ask-opt-body">' +
-              '<span class="ch-ask-opt-desc">自己写的</span>' +
-              '<span class="ch-ask-opt-label"></span>' +
-            '</span>' +
-            '<span class="ch-ask-opt-check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>';
-          row.querySelector('.ch-ask-opt-label').textContent = custom;
-          optsWrap.appendChild(row);
-        });
+        ansList.filter(a => a && !optLabels.has(a)).forEach(renderCustomAnswer);
       }
+    } else if (!isFocused) {
+      // Locked earlier question. If the user typed a custom answer, replay it
+      // here so they can keep their bearings in a multi-question card.
+      const local = state.sent[qIdx];
+      if (local && !opts.some(o => o.label === local)) renderCustomAnswer(local);
     }
     qBox.appendChild(optsWrap);
 
@@ -2536,62 +2607,76 @@ function _askRequestRender() {
   renderChatMessages(activeChat, cached);
 }
 
-async function _sendAskKey(data) {
-  if (typeof postTerminalInput !== 'function') return false;
+async function _sendAskKeys(keys, pace) {
+  // Drive the AskUserQuestion TUI through the RAW keystroke endpoint
+  // (terminal-respond → send_terminal_keys), NOT the chat-message paste path
+  // (postTerminalInput → /input). The paste path uses bracketed paste + a
+  // "[Pasted text]" smart-Enter heuristic meant for chat, which double-fires
+  // Enter and races the TUI. Here the whole sequence for one action goes in a
+  // single request, paced server-side — no client-side multi-call race.
   const sess = (typeof activeChat !== 'undefined' && activeChat) || (typeof activeSession !== 'undefined' && activeSession);
-  if (!sess) return false;
-  return postTerminalInput(data, sess);
-}
-
-async function _maybeAutoSubmitReview(tool, justFinishedIdx) {
-  // After the last question of a multi-question set is answered, the TUI lands
-  // on a Review screen ("1. Submit / 2. Cancel"). Send '1' to close it.
-  const total = ((tool.ask || {}).questions || []).length;
-  if (total <= 1) return;
-  if (justFinishedIdx !== total - 1) return;
-  await new Promise(r => setTimeout(r, 90));
-  const state = _ensureAskState(tool.id);
-  state.submitting = true;
-  await _sendAskKey('1');
-  state.submitting = false;
+  if (!sess || !Array.isArray(keys) || !keys.length) return false;
+  try {
+    const body = { keys };
+    if (typeof pace === 'number') body.pace = pace;
+    const r = await fetch(API + '/sessions/' + encodeURIComponent(sess) + '/terminal-respond', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + TOKEN },
+      body: JSON.stringify(body),
+    });
+    if (r.status === 401) {
+      localStorage.removeItem('echo_token');
+      TOKEN = '';
+      if (typeof showLogin === 'function') showLogin();
+      return false;
+    }
+    const d = await r.json().catch(() => ({}));
+    return !!(d && d.ok);
+  } catch (e) {
+    console.warn('ask keys failed', e);
+    return false;
+  }
 }
 
 async function _onAskOptionClick(tool, qIdx, oIdx, label) {
   const state = _ensureAskState(tool.id);
   if (state.submitting) return;
   const ask = tool.ask || {};
-  const q = (ask.questions || [])[qIdx];
+  const questions = ask.questions || [];
+  const q = questions[qIdx];
   if (!q) return;
   const digit = String(oIdx + 1);
+  const isLast = qIdx === questions.length - 1;
+  state.submitting = true;
+  let ok;
   if (q.multiSelect) {
-    // Toggle: send digit (TUI toggles), update local set.
-    state.submitting = true;
-    const ok = await _sendAskKey(digit);
-    state.submitting = false;
-    if (!ok) return;
-    if (!state.toggled[qIdx]) state.toggled[qIdx] = new Set();
-    if (state.toggled[qIdx].has(oIdx)) state.toggled[qIdx].delete(oIdx);
-    else state.toggled[qIdx].add(oIdx);
+    // Toggle only — the TUI stays on this question. Submit via _onAskMultiSubmit.
+    ok = await _sendAskKeys([digit], 0.1);
+    if (ok) {
+      if (!state.toggled[qIdx]) state.toggled[qIdx] = new Set();
+      if (state.toggled[qIdx].has(oIdx)) state.toggled[qIdx].delete(oIdx);
+      else state.toggled[qIdx].add(oIdx);
+    }
   } else {
-    state.submitting = true;
-    const ok = await _sendAskKey(digit);
-    state.submitting = false;
-    if (!ok) return;
-    state.sent[qIdx] = label;
-    // Single-select auto-advances in the TUI, mirror that locally so the next
-    // question becomes the focused one immediately.
-    state.focused = qIdx + 1;
-    await _maybeAutoSubmitReview(tool, qIdx);
+    // Single-select: the digit selects + auto-advances. On the last question of
+    // a multi-question set it lands on the review screen — confirm there atomically.
+    const keys = [digit];
+    if (questions.length > 1 && isLast) keys.push({ submit_after_review: true });
+    ok = await _sendAskKeys(keys, 0.1);
+    if (ok) {
+      state.sent[qIdx] = label;
+      state.focused = qIdx + 1;
+    }
   }
+  state.submitting = false;
   _askRequestRender();
 }
 
 function _onAskTypeOpen(tool, qIdx, numOptions, _cardEl) {
   const state = _ensureAskState(tool.id);
   state.typeOpen = qIdx;
-  // We don't pre-send the hotkey — the TUI enters edit mode the moment we
-  // press the digit, but we want to wait until the user actually has text to
-  // submit so they can change their mind without poisoning the TUI buffer.
+  // We don't pre-send the hotkey — the keys go out atomically on submit so the
+  // user can still change their mind without poisoning the TUI buffer.
   _askRequestRender();
 }
 
@@ -2599,21 +2684,37 @@ async function _onAskTypeSubmit(tool, qIdx, text) {
   const state = _ensureAskState(tool.id);
   if (state.submitting) return;
   const ask = tool.ask || {};
-  const q = (ask.questions || [])[qIdx];
+  const questions = ask.questions || [];
+  const q = questions[qIdx];
   if (!q) return;
   const numOptions = (q.options || []).length;
-  const typeDigit = String(numOptions + 1);  // "Type something" lives right after options
+  const isLast = qIdx === questions.length - 1;
+  let keys;
+  if (q.multiSelect) {
+    // Multi-select "Type something" behaves differently from single-select:
+    // pressing its digit only TOGGLES an empty checkbox — it does NOT enter the
+    // text field. The field is reached by arrow-navigating onto it. Digits only
+    // toggle (never move the cursor) and the card sends nothing but digits before
+    // this, so the cursor sits on option 1: Down × numOptions lands on "Type
+    // something". Typing then auto-checks the custom item; Tab moves to the inline
+    // Next/Submit and Enter advances (→ the review screen on the last question).
+    // This is the fix for the multi-select custom-input desync/stuck bug.
+    keys = [];
+    for (let i = 0; i < numOptions; i++) keys.push('Down');
+    keys.push({ text }, 'Tab', 'Enter');
+    if (isLast) keys.push({ submit_after_review: true });
+  } else {
+    // Single-select: the digit opens the field, type, Enter selects + auto-advances.
+    keys = [String(numOptions + 1), { text }, 'Enter'];
+    if (questions.length > 1 && isLast) keys.push({ submit_after_review: true });
+  }
   state.submitting = true;
-  // Sequence: digit (enter edit mode) → text → Enter
-  let ok = await _sendAskKey(typeDigit);
-  if (ok) ok = await _sendAskKey(text);
-  if (ok) ok = await _sendAskKey('\r');
+  const ok = await _sendAskKeys(keys, 0.1);
   state.submitting = false;
   if (!ok) return;
   state.sent[qIdx] = text;
   state.typeOpen = -1;
   state.focused = qIdx + 1;
-  await _maybeAutoSubmitReview(tool, qIdx);
   _askRequestRender();
 }
 
@@ -2622,14 +2723,15 @@ async function _onAskMultiSubmit(tool, qIdx) {
   if (state.submitting) return;
   const set = state.toggled[qIdx];
   if (!set || !set.size) return;
-  state.submitting = true;
-  // Tab → move to next tab (next question or Submit). If this is the last
-  // question, Tab lands on the Submit screen; we then send '1' to confirm.
-  // If not last, Tab lands on the next question (TUI advances naturally).
   const ask = tool.ask || {};
-  const isLast = qIdx === (ask.questions || []).length - 1;
-  let ok = await _sendAskKey('\t');
-  if (ok && isLast) ok = await _sendAskKey('1');
+  const questions = ask.questions || [];
+  const isLast = qIdx === questions.length - 1;
+  // Tab advances to the next tab — the next question, or the review screen when
+  // this is the last question (then confirm at the review, atomically).
+  const keys = ['Tab'];
+  if (isLast) keys.push({ submit_after_review: true });
+  state.submitting = true;
+  const ok = await _sendAskKeys(keys, 0.1);
   state.submitting = false;
   if (!ok) return;
   state.focused = qIdx + 1;
@@ -2640,7 +2742,7 @@ async function _onAskCancel(tool) {
   const state = _ensureAskState(tool.id);
   if (state.submitting) return;
   state.submitting = true;
-  await _sendAskKey('\x1b');  // Esc
+  await _sendAskKeys(['Escape'], 0.1);
   state.submitting = false;
   _askRequestRender();
 }
@@ -2902,6 +3004,73 @@ function _previewHtml(file, dlUrl) {
   });
 }
 
+function buildDeliveryMark(blk) {
+  // Backend tags assistant bubbles that went out via the Telegram channel with a
+  // {type:'delivery', channel:'telegram', label:'已回复到 Telegram'} block. We
+  // render that as a small badge under the bubble so the user can tell at a
+  // glance the reply landed on TG, not just in this transcript.
+  const hasMeta = Array.isArray(blk.meta) && blk.meta.length > 0;
+  const hasBody = Boolean((blk.content || '').trim()) || hasMeta;
+  const labelText = blk.label || '已回复到 Telegram';
+  const delivery = document.createElement('div');
+  delivery.className = 'ch-delivery-mark';
+  if (!hasBody) {
+    delivery.textContent = labelText;
+    return delivery;
+  }
+  delivery.classList.add('is-collapsible');
+  const head = document.createElement('button');
+  head.type = 'button';
+  head.className = 'ch-delivery-head';
+  head.setAttribute('aria-expanded', 'false');
+  const label = document.createElement('span');
+  label.className = 'ch-delivery-label';
+  label.textContent = labelText;
+  head.appendChild(label);
+  const chevron = document.createElement('span');
+  chevron.className = 'ch-delivery-chevron';
+  chevron.textContent = '›';
+  head.appendChild(chevron);
+  const body = document.createElement('div');
+  body.className = 'ch-delivery-body';
+  body.hidden = true;
+  if (hasMeta) {
+    const meta = document.createElement('div');
+    meta.className = 'ch-delivery-meta';
+    blk.meta.forEach(item => {
+      if (!item || item.value == null || item.value === '') return;
+      const row = document.createElement('div');
+      row.className = 'ch-delivery-meta-row';
+      const key = document.createElement('span');
+      key.className = 'ch-delivery-meta-key';
+      key.textContent = item.label || '';
+      const value = document.createElement('span');
+      value.className = 'ch-delivery-meta-value';
+      value.textContent = String(item.value);
+      row.appendChild(key);
+      row.appendChild(value);
+      meta.appendChild(row);
+    });
+    if (meta.childElementCount) body.appendChild(meta);
+  }
+  const content = (blk.content || '').trim();
+  if (content) {
+    const contentEl = document.createElement('div');
+    contentEl.className = 'ch-delivery-content';
+    contentEl.textContent = content;
+    body.appendChild(contentEl);
+  }
+  head.onclick = () => {
+    const expanded = !delivery.classList.contains('expanded');
+    delivery.classList.toggle('expanded', expanded);
+    head.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    body.hidden = !expanded;
+  };
+  delivery.appendChild(head);
+  delivery.appendChild(body);
+  return delivery;
+}
+
 function buildThinkingBlock(block) {
   const text = block.text || '';
   const preview = text.replace(/\s+/g, ' ').trim();
@@ -3130,14 +3299,25 @@ function _chBuildTerminalPrompt(prompt, sessionName) {
       btn.disabled = true;
       btn.textContent = '发送中…';
       try {
-        await fetch(API + '/sessions/' + encodeURIComponent(sessionName) + '/terminal-respond', {
+        const response = await fetch(API + '/sessions/' + encodeURIComponent(sessionName) + '/terminal-respond', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + TOKEN },
           body: JSON.stringify({ keys: action.keys }),
         });
-        card.remove();
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || data.ok === false) throw new Error((data && data.error) || 'terminal respond failed');
+        // dismiss: false means the action is non-terminal (e.g. a toggle that
+        // keeps the prompt up). Keep the card visible and re-poll quickly so
+        // the new pane state shows up; otherwise rip the card and wait for
+        // the next render to land.
+        if (action.dismiss === false) {
+          btn.disabled = false;
+          btn.textContent = action.label;
+        } else {
+          card.remove();
+        }
         lastChatFingerprint = null;
-        setTimeout(() => renderChatMessages(sessionName), 1500);
+        setTimeout(() => renderChatMessages(sessionName), action.dismiss === false ? 250 : 1200);
       } catch (e) {
         btn.textContent = '失败';
         btn.disabled = false;
@@ -3198,7 +3378,8 @@ async function renderChatMessages(name, cachedData = null) {
         return;
       }
       data = await r.json();
-      if (!chViewingArchive && !chViewingUnified) _chLiveMessageCache.set(name, data);
+      if (!chViewingArchive && !chViewingUnified) _chLiveMessageCache.set(name, _chCacheableLiveData(data));
+      data = _chCacheableLiveData(data);
     }
     if (requestSeq !== _chRenderRequestSeq || chSub !== 'detail' || activeChat !== name) return;
     const msgs = data.messages || [];
@@ -3212,7 +3393,12 @@ async function renderChatMessages(name, cachedData = null) {
     const pendingFp = pendingMsgs.map(message => message.id + ':' + message.status).join('|');
     // Key on terminal_prompt too: it can appear/disappear while messages stay
     // unchanged (e.g. a model-switch menu pops up after a quiet turn).
-    const tpFp = data.terminal_prompt ? (data.terminal_prompt.label + ':' + (data.terminal_prompt.actions || []).length) : '';
+    // Include the prompt body in the fingerprint — Codex's "Tell me what to do
+    // next" prompts can swap their text while keeping the same label + action
+    // count; without text in the key the chat doesn't re-render.
+    const tpFp = data.terminal_prompt
+      ? (data.terminal_prompt.fingerprint || (data.terminal_prompt.label + ':' + (data.terminal_prompt.text || '') + ':' + (data.terminal_prompt.actions || []).length))
+      : '';
     const fp = chMsgLimit + ':' + chatFingerprint(msgs) + ':pending:' + pendingFp + ':reveal:' + _chRevealFingerprint() + ':tp:' + tpFp;
     if (fp === lastChatFingerprint) return;  // nothing changed — no repaint, no flicker
     lastChatFingerprint = fp;
@@ -3303,10 +3489,15 @@ async function renderChatMessages(name, cachedData = null) {
             bubble.appendChild(unavailable);
           } else {
             const img = document.createElement('img');
-            img.src = blk.src + (blk.src.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(TOKEN);
+            // blk.src is absolute (`/api/sessions/.../uploads/...`) but our app may
+            // be mounted under a reverse-proxy prefix (e.g. /kaiyuan/). Without
+            // prepending PREFIX, the bare `/api/` request lands on a sibling
+            // dashboard host that doesn't have the same uploads dir.
+            const resolvedSrc = blk.src.startsWith('/api/') ? PREFIX + blk.src : blk.src;
+            img.src = resolvedSrc + (resolvedSrc.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(TOKEN);
             img.alt = blk.fname || '';
             img.loading = 'lazy';
-            img.onclick = () => _showImagePreview({ available: true, serve_url: null, upload_session: (blk.src.match(/sessions\/([^/]+)\/uploads/) || [])[1], filename: blk.fname }, { session_id: chViewingUnified, session_name: document.getElementById('chDetailTitle').textContent, ts: m.ts, id: m.id });
+            img.onclick = () => _showImagePreview({ available: true, serve_url: blk.src.includes('/api/telegram/inbox/') ? blk.src : null, upload_session: (blk.src.match(/sessions\/([^/]+)\/uploads/) || [])[1], filename: blk.fname }, { session_id: chViewingUnified, session_name: document.getElementById('chDetailTitle').textContent, ts: m.ts, id: m.id });
             bubble.appendChild(img);
           }
         } else if (blk.type === 'tool_group') {
@@ -3320,9 +3511,11 @@ async function renderChatMessages(name, cachedData = null) {
           bubble.appendChild(buildThinkingBlock(blk));
         } else if (blk.type === 'process_group') {
           bubble.appendChild(buildProcessGroup(blk));
+        } else if (blk.type === 'delivery') {
+          bubble.appendChild(buildDeliveryMark(blk));
         }
       });
-      const hasVisibleContent = blocks.some(b => b.type === 'text' || b.type === 'image');
+      const hasVisibleContent = blocks.some(b => b.type === 'text' || b.type === 'image' || b.type === 'delivery');
       const messageTime = _messageTimestamp(m.ts);
       if (messageTime && hasVisibleContent) {
         const timestamp = document.createElement('div');
@@ -3766,9 +3959,9 @@ async function chSendMessage() {
   _sendInFlight = false;
   if (send) send.disabled = false;
   if (!result.ok) {
-    _chPendingUpdate(pending.id, result.unconfirmed ? 'unconfirmed' : 'failed');
+    _chPendingUpdate(pending.id, result.blocked ? 'blocked' : (result.unconfirmed ? 'unconfirmed' : 'failed'));
     _chShowPendingImmediately(pending);
-    if (!result.unconfirmed) chInput.focus();
+    if (!result.unconfirmed && !result.blocked) chInput.focus();
     return;
   }
   _chPendingUpdate(pending.id, result.direct ? 'direct' : (result.queued ? 'queued' : 'pending'));

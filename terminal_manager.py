@@ -1699,13 +1699,63 @@ def detect_terminal_prompt(session: str) -> Optional[dict]:
     return None
 
 
-def send_terminal_keys(session: str, keys: list) -> dict:
-    """Send a sequence of keys to a tmux session."""
+def _wait_for_ask_review(session: str, timeout: float = 0.9) -> bool:
+    """Poll the pane until the AskUserQuestion review screen is showing.
+
+    After the last question is answered the TUI transitions to a
+    "Review your answers … 1. Submit answers / 2. Cancel" screen. Sending the
+    confirm key before that transition lands it on the wrong screen and submits
+    the wrong answer — the root of the "最后确认不是我点的选项" bug. Waiting for
+    the review text makes the confirm deterministic instead of a fixed-delay race.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        r = _run(["tmux", "capture-pane", "-p", "-t", session, "-S", "-24"], timeout=3)
+        if r.returncode == 0:
+            pane = ANSI_RE.sub("", r.stdout or "")
+            if "Submit answers" in pane or "Ready to submit" in pane:
+                return True
+        time.sleep(0.08)
+    return False
+
+
+def send_terminal_keys(session: str, keys: list, pace: float = 0.2) -> dict:
+    """Send a sequence of keys to a tmux session.
+
+    Each element is one of:
+      - str: a tmux key name sent as-is ("1", "Enter", "Tab", "Escape", "Right").
+      - {"text": "..."}: literal text via `send-keys -l` (preserves spaces /
+        Chinese / punctuation — for AskUserQuestion "Type something" answers).
+      - {"submit_after_review": true}: wait for the AskUserQuestion review screen,
+        then press "1". Removes the confirm-before-transition race.
+
+    `pace` is the inter-key delay; the Ask path passes a tighter value than the
+    0.2s default used by blocking-prompt replies.
+    """
+    if not NAME_RE.match(session):
+        return {"ok": False, "error": "invalid session name"}
     for key in keys:
-        r = _run(["tmux", "send-keys", "-t", session, key])
-        if r.returncode != 0:
-            return {"ok": False, "error": r.stderr.strip() or "send-keys failed"}
-        time.sleep(0.2)
+        if isinstance(key, dict):
+            if "text" in key:
+                txt = str(key.get("text") or "")
+                if txt:
+                    # `--` guards against a leading dash being read as a flag.
+                    r = _run(["tmux", "send-keys", "-t", session, "-l", "--", txt])
+                    if r.returncode != 0:
+                        return {"ok": False, "error": r.stderr.strip() or "send-keys failed"}
+            elif key.get("submit_after_review"):
+                if not _wait_for_ask_review(session):
+                    return {"ok": False, "error": "review screen did not appear"}
+                r = _run(["tmux", "send-keys", "-t", session, "1"])
+                if r.returncode != 0:
+                    return {"ok": False, "error": r.stderr.strip() or "send-keys failed"}
+            else:
+                return {"ok": False, "error": f"unknown key spec: {key!r}"}
+        else:
+            r = _run(["tmux", "send-keys", "-t", session, str(key)])
+            if r.returncode != 0:
+                return {"ok": False, "error": r.stderr.strip() or "send-keys failed"}
+        time.sleep(pace)
     return {"ok": True}
 
 
@@ -2811,7 +2861,7 @@ def validate_new_session(name: str, cwd: str) -> Optional[str]:
     return None
 
 
-def create_session(name: str, cwd: str, session_type: str = "cc", cols: int = 80, rows: int = 24, resume_sid: Optional[str] = None, setting_sources: Optional[str] = None) -> dict:
+def create_session(name: str, cwd: str, session_type: str = "cc", cols: int = 80, rows: int = 24, resume_sid: Optional[str] = None, setting_sources: Optional[str] = None, with_telegram: bool = False) -> dict:
     cwd = os.path.expanduser(cwd or "")
     err = validate_new_session(name, cwd)
     if err:
@@ -2829,6 +2879,11 @@ def create_session(name: str, cwd: str, session_type: str = "cc", cols: int = 80
         wrapped = f"cd {cwd_real} && while true; do opencode; sleep 3; done"
     else:
         args = ["claude", "--dangerously-skip-permissions"]
+        if with_telegram:
+            # Wires the official Telegram channel plugin onto this session so
+            # bot DMs route here. Only one CC pane at a time can own the bot
+            # (single getUpdates consumer per token) — see transfer_telegram.
+            args.extend(["--channels", "plugin:telegram@claude-plugins-official"])
         if setting_sources:
             args.extend(["--setting-sources", setting_sources])
         if resume_sid:
@@ -2841,6 +2896,182 @@ def create_session(name: str, cwd: str, session_type: str = "cc", cols: int = 80
         return {"ok": False, "error": r.stderr.strip() or "tmux failed"}
     ensure_pipe(name)
     return {"ok": True, "name": name, "cwd": cwd_real, "type": session_type, "cols": cols, "rows": rows}
+
+
+# ── Telegram channel mounting ──
+#
+# The Telegram MCP plugin polls one bot token via long-poll getUpdates. Telegram
+# allows exactly one consumer per token, so at most one CC session can "own" the
+# bot at a time. The plugin guards this with a PID file (server.ts), but the
+# dashboard layer also lets you *move* the bot to a different session at runtime
+# — that's what `transfer_telegram` does: rebuild target with --channels, rebuild
+# every other holder without, all under --resume so chats survive.
+
+def _current_session_sid(session: str) -> Optional[str]:
+    """Get the resume SID for a running CC session (its JSONL stem)."""
+    info = _pane_info(session)
+    if not info or info.get("kind") != "cc":
+        return None
+    jsonl = _claude_jsonl_for_pid(info.get("claude_pid"))
+    return jsonl.stem if jsonl else None
+
+
+def _has_telegram(session: str) -> bool:
+    info = _pane_info(session)
+    return bool(info and "plugin:telegram" in (info.get("claude_args") or ""))
+
+
+def telegram_session_status(session: str, info: Optional[dict] = None) -> dict:
+    """Return configured vs actually-running Telegram channel state.
+
+    `--channels plugin:telegram...` only means Claude was started with the
+    channel argument. The channel is really available only after the plugin's
+    bun server is running under that tmux pane.
+    """
+    if not NAME_RE.match(session):
+        return {"session": session, "configured": False, "running": False, "state": "none"}
+    if info is None:
+        info = _pane_info(session)
+    configured = bool(info and info.get("kind") == "cc" and "plugin:telegram" in (info.get("claude_args") or ""))
+    running = False
+    if info and info.get("pane_pid"):
+        for _pid, comm, args in _walk_descendants(info["pane_pid"]):
+            if "claude-plugins-official/telegram" in args and ("bun" in comm or "bun" in args):
+                running = True
+                break
+    state = "connected" if running else ("configured" if configured else "none")
+    return {"session": session, "configured": configured, "running": running, "state": state}
+
+
+def telegram_status() -> dict:
+    """Survey all sessions; return who's currently holding the bot vs configured."""
+    sessions_status = []
+    holder = None
+    configured_holder = None
+    for s in _tmux_sessions_raw():
+        status = telegram_session_status(s["name"])
+        if status["state"] != "none":
+            sessions_status.append(status)
+        if status["running"] and holder is None:
+            holder = s["name"]
+        if status["configured"] and configured_holder is None:
+            configured_holder = s["name"]
+    return {"holder": holder, "configured_holder": configured_holder, "sessions": sessions_status}
+
+
+def telegram_holder() -> Optional[str]:
+    """Session whose Telegram plugin process is actually running."""
+    return telegram_status().get("holder")
+
+
+def telegram_configured_holder() -> Optional[str]:
+    """Session started with the Telegram channel argument."""
+    return telegram_status().get("configured_holder")
+
+
+def _isolation_setting_sources(cwd: str) -> Optional[str]:
+    """Return "user" if the project at `cwd` enables the Telegram plugin.
+
+    A session that should NOT own Telegram is rebuilt without --channels, but
+    that alone is not enough: if its cwd's project settings enable the plugin,
+    being in that cwd auto-loads it as a plain MCP and the session re-grabs the
+    single-instance bot — then can't deliver inbound, having no channel wiring
+    (the recurring "TG 又断" split-brain). Pinning it to user-level settings
+    makes it ignore the project's enabledPlugins so it never touches the bot.
+    """
+    try:
+        sp = os.path.join(os.path.realpath(cwd), ".claude", "settings.json")
+        with open(sp, "r", encoding="utf-8") as f:
+            plugins = (json.load(f) or {}).get("enabledPlugins") or {}
+        if any("telegram" in str(k) and v for k, v in plugins.items()):
+            return "user"
+    except (OSError, json.JSONDecodeError, AttributeError, ValueError):
+        pass
+    return None
+
+
+def _telegram_session_snapshot(session: str) -> dict:
+    """Capture everything we need to rebuild `session` with a different TG state."""
+    info = _pane_info(session) or {}
+    return {
+        "name": session,
+        "cwd": info.get("cwd") or HOME,
+        "sid": _current_session_sid(session),
+        "display": get_display_name(session),
+        "chat": get_chat_name(session),
+    }
+
+
+def _rebuild_session(snap: dict, with_telegram: bool, setting_sources: Optional[str] = None) -> dict:
+    """Kill `snap['name']` and re-create it under --resume with the requested
+    Telegram state. Restores display/chat names afterward."""
+    name = snap["name"]
+    kill_session(name, allow_primary=True)
+    time.sleep(0.5)
+    r = create_session(
+        name,
+        snap["cwd"],
+        session_type="cc",
+        resume_sid=snap.get("sid"),
+        with_telegram=with_telegram,
+        setting_sources=setting_sources,
+    )
+    if r.get("ok"):
+        if snap.get("display"):
+            set_display_name(name, snap["display"])
+        if snap.get("chat"):
+            set_chat_name(name, snap["chat"])
+    return r
+
+
+def transfer_telegram(target: str) -> dict:
+    """Move the Telegram channel onto `target`, rebuilding every session that
+    currently holds the bot so exactly one owns it. All rebuilds use --resume so
+    conversations are preserved.
+
+    "Holder" is plural by design: the session started with --channels
+    (configured_holder) and the session whose bun poller is actually running
+    (holder) can differ — a non-channel session in the bot's cwd grabs it via
+    project enabledPlugins. We strip telegram from ALL of them except the
+    target, and isolate each with --setting-sources user where the project
+    enables the plugin so it can't re-grab the single-instance bot."""
+    if not NAME_RE.match(target):
+        return {"ok": False, "error": "invalid target name"}
+
+    target_info = _pane_info(target)
+    if not target_info or target_info.get("kind") != "cc":
+        return {"ok": False, "error": f"{target} is not a CC session"}
+
+    status = telegram_status()
+    running_holder = status.get("holder")
+    configured_holder = status.get("configured_holder")
+    # dict.fromkeys preserves order and dedups; drop the target itself.
+    sources = [s for s in dict.fromkeys([configured_holder, running_holder]) if s and s != target]
+
+    if not sources and running_holder == target and configured_holder == target:
+        return {"ok": True, "already": True, "holder": target}
+
+    # Snapshot everyone BEFORE any kill, so resume sids stay readable.
+    target_snap = _telegram_session_snapshot(target)
+    source_snaps = [_telegram_session_snapshot(s) for s in sources]
+
+    # 1. Rebuild target WITH telegram so it claims the bot.
+    r = _rebuild_session(target_snap, with_telegram=True)
+    if not r.get("ok"):
+        return {"ok": False, "error": f"recreate target failed: {r.get('error')}",
+                "sources": sources, "target": target}
+
+    # 2. Strip telegram from every other holder, isolating so it can't re-grab.
+    stripped = []
+    for snap in source_snaps:
+        r2 = _rebuild_session(snap, with_telegram=False,
+                              setting_sources=_isolation_setting_sources(snap["cwd"]))
+        if not r2.get("ok"):
+            return {"ok": False, "error": f"recreate source {snap['name']} failed: {r2.get('error')}",
+                    "sources": sources, "target": target, "target_ok": True, "stripped": stripped}
+        stripped.append(snap["name"])
+
+    return {"ok": True, "sources": stripped, "target": target, "target_sid": target_snap["sid"]}
 
 
 def resize_session(session: str, cols: int, rows: int) -> dict:

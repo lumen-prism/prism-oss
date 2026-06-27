@@ -48,6 +48,16 @@ CODEX_SESSIONS_DIR = Path(os.path.expanduser("~/.codex/sessions"))
 
 _CHANNEL_RE = re.compile(r"<channel[^>]*>\n?(.*?)\n?</channel>", re.DOTALL)
 _CHANNEL_ATTRS_RE = re.compile(r'(\w+)="([^"]*)"')
+
+# Telegram MCP plugin — tools the assistant calls to reply / react via the bot.
+# Reply text becomes a normal assistant text message (with a delivery marker so
+# the UI can hint where it landed); react adds an emoji reaction to a prior
+# inbound msg without producing its own bubble.
+TG_REPLY_TOOLS = {
+    "mcp__plugin_telegram_telegram__reply",
+    "mcp__plugin_telegram_telegram__edit_message",
+}
+TG_REACT_TOOL = "mcp__plugin_telegram_telegram__react"
 _CHAT_INPUT_RE = re.compile(r'<chat-input\b[^>]*>\s*(.*?)\s*</chat-input>', re.DOTALL | re.IGNORECASE)
 _CHAT_INPUT_PREFIX_RE = re.compile(r'<chat-input\b[^>]*/>\s*', re.IGNORECASE)
 _CHAT_INPUT_SENT_AT_RE = re.compile(r'<chat-input\b[^>]*\bsent_at="([^"]+)"[^>]*/>', re.IGNORECASE)
@@ -203,6 +213,9 @@ def _parse_cc_session(jsonl_path):
     started = False
     session_first_ts = None
     session_last_ts = None
+    # Telegram-backed CC threads can re-include the same inbound msg across
+    # multiple <channel> blocks; dedup by tg_message_id so the UI doesn't double up.
+    seen_tg_message_ids = set()
 
     def flush_assistant():
         nonlocal current_assistant
@@ -217,6 +230,13 @@ def _parse_cc_session(jsonl_path):
                 "role": "assistant", "sender": "assistant", "content": text,
                 "ts": current_assistant["ts"] or "", "message_type": "text",
                 "source_uuid": current_assistant["uuid"], "metadata": meta,
+            })
+        for reaction in current_assistant.get("reactions", []):
+            messages.append({
+                "role": "assistant", "sender": "assistant", "content": reaction["emoji"],
+                "ts": current_assistant["ts"] or "", "message_type": "reaction",
+                "source_uuid": None,
+                "metadata": {"target_msg_id": reaction.get("target_msg_id")},
             })
         current_assistant = None
 
@@ -254,6 +274,11 @@ def _parse_cc_session(jsonl_path):
             if isinstance(content, str):
                 ts = _chat_input_sent_at(content, ts)
             attrs = _channel_attrs(content) if isinstance(content, str) else {}
+            tg_message_id = attrs.get("message_id") if attrs else None
+            if tg_message_id and tg_message_id in seen_tg_message_ids:
+                continue
+            if tg_message_id:
+                seen_tg_message_ids.add(tg_message_id)
             started = True
             flush_assistant()
             if ts:
@@ -261,17 +286,24 @@ def _parse_cc_session(jsonl_path):
                 session_last_ts = ts
             image_path = attrs.get("image_path") if attrs else None
             stored_text = text + (("\n@" + image_path) if image_path else "")
+            user_meta = {}
+            if attrs:
+                if attrs.get("user"): user_meta["tg_user"] = attrs.get("user")
+                if attrs.get("chat_id"): user_meta["tg_chat_id"] = attrs.get("chat_id")
+                if tg_message_id: user_meta["tg_message_id"] = tg_message_id
+            if image_path:
+                user_meta["image_path"] = image_path
             messages.append({
                 "role": "user", "sender": "user", "content": stored_text, "ts": ts,
                 "message_type": "text", "source_uuid": uuid,
-                "metadata": {"image_path": image_path} if image_path else {},
+                "metadata": user_meta,
             })
             continue
 
         if msg_type != "assistant" or not started or not isinstance(content, list):
             continue
         if current_assistant is None:
-            current_assistant = {"ts": ts, "uuid": uuid, "texts": []}
+            current_assistant = {"ts": ts, "uuid": uuid, "texts": [], "reactions": []}
         elif ts:
             current_assistant["ts"] = ts
         for block in content:
@@ -288,11 +320,36 @@ def _parse_cc_session(jsonl_path):
             elif block_type == "tool_use":
                 name = block.get("name", "") or ""
                 inp = block.get("input") or {}
-                if name in ("Write", "Edit", "write", "edit", "NotebookEdit"):
+                if name in TG_REPLY_TOOLS:
+                    # Telegram reply/edit_message — surface the text the assistant
+                    # actually sent to TG as its own bubble (otherwise users only
+                    # see tool_use noise and no outgoing message).
+                    reply_text = (inp.get("text") or "").strip()
+                    if reply_text:
+                        flush_assistant()
+                        messages.append({
+                            "role": "assistant", "sender": "assistant", "content": reply_text,
+                            "ts": ts or "", "message_type": "text",
+                            "source_uuid": uuid,
+                            "metadata": {
+                                "telegram_reply": True,
+                                "telegram_action": "edit" if name.endswith("edit_message") else "reply",
+                            },
+                        })
+                        session_last_ts = ts or session_last_ts
+                elif name == TG_REACT_TOOL and inp.get("emoji"):
+                    # Reactions don't get their own assistant text — bolt onto the
+                    # currently-buffered assistant entry as a sibling list.
+                    if current_assistant is None:
+                        current_assistant = {"ts": ts, "uuid": uuid, "texts": [], "reactions": []}
+                    current_assistant.setdefault("reactions", []).append({
+                        "emoji": inp["emoji"], "target_msg_id": inp.get("message_id"),
+                    })
+                elif name in ("Write", "Edit", "write", "edit", "NotebookEdit"):
                     fp = inp.get("file_path") or inp.get("path") or ""
                     if fp:
                         if current_assistant is None:
-                            current_assistant = {"ts": ts, "uuid": uuid, "texts": []}
+                            current_assistant = {"ts": ts, "uuid": uuid, "texts": [], "reactions": []}
                         current_assistant.setdefault("files", [])
                         if fp not in [f["path"] for f in current_assistant["files"]]:
                             current_assistant["files"].append({"path": fp, "action": name.lower()})
@@ -456,6 +513,7 @@ def _codex_patch_path(arguments):
 _CODEX_IMAGE_PATH_RE = re.compile(
     r"@?("
     r"(?:/tmp/dashboard-uploads/[^\s<>\"']+"
+    r"|/home/ubuntu/\.claude/channels/telegram/inbox/[^\s<>\"']+"
     r"|" + re.escape(str(_INBOX_DIR)) + r"/[^\s<>\"']+"
     r"|/[^\s<>\"']+"
     r"|(?:\./)?[A-Za-z0-9._-]+/[^\s<>\"']+)"
@@ -505,6 +563,15 @@ def _codex_live_text_blocks(text, cwd=None):
             blocks.append({
                 "type": "image",
                 "src": f"/api/sessions/{resource['upload_session']}/uploads/{filename}",
+                "fname": filename,
+                "available": resource["available"],
+            })
+        elif "/.claude/channels/telegram/inbox/" in path:
+            _path, filename = _TG_IMAGE_RE.search(match.group(0)).groups()
+            resource = _resources_from_content(match.group(0))[0]
+            blocks.append({
+                "type": "image",
+                "src": resource["serve_url"],
                 "fname": filename,
                 "available": resource["available"],
             })
@@ -911,6 +978,9 @@ _URL_RE = re.compile(
     re.IGNORECASE,
 )
 _UPLOAD_RE = re.compile(r"@?(/tmp/dashboard-uploads/([^/\s]+)/([^\s<>\"']+))", re.I)
+# Absolute paths the Telegram MCP plugin pastes when forwarding photo messages
+# (CC JSONLs include the on-disk path, not a URL; we resolve via /api/telegram/inbox/).
+_TG_IMAGE_RE = re.compile(r"@?(/home/ubuntu/\.claude/channels/telegram/inbox/([^\s<>\"']+\.(?:png|jpg|jpeg|gif|webp|heic)))", re.I)
 _IMG_EXT_RE = re.compile(r'\.(png|jpg|jpeg|gif|webp|svg|bmp|heic)$', re.I)
 _FILE_EXT_RE = re.compile(r'\.(pdf|doc|docx|xls|xlsx|ppt|pptx|zip|tar|gz|md|html|csv|txt|py|js|ts|json|yaml|yml|sh)$', re.I)
 _CJK_RE = re.compile(r"[㐀-鿿]")
@@ -933,6 +1003,13 @@ def _resources_from_content(content):
             "upload_session": resolved_session,
             "filename": filename,
             "available": os.path.exists(resolved_path),
+        })
+    for path, filename in _TG_IMAGE_RE.findall(content or ""):
+        resources.append({
+            "kind": "image", "path": path, "filename": filename,
+            "available": os.path.exists(path),
+            "serve_url": "/api/telegram/inbox/" + filename,
+            "source": "telegram",
         })
     for url in _URL_RE.findall(content or ""):
         url = url.rstrip('.,，。)）]】')
@@ -1121,33 +1198,66 @@ def get_session_as_blocks(session_id, limit=500, focus_id=None):
             ).fetchall()
             msgs = [dict(r) for r in reversed(rows)]
     blocks = []
+    # Walk attachments + Telegram-inbox images in one pass — the body may contain
+    # either, and we want the rendered order to follow the actual text positions.
+    combined_re = re.compile(
+        _UPLOAD_RE.pattern + "|" + _TG_IMAGE_RE.pattern,
+        _UPLOAD_RE.flags,
+    )
     for m in msgs:
         if m["message_type"] != "text":
             continue
         content = m["content"]
         message_blocks = []
         cursor = 0
-        for match in _UPLOAD_RE.finditer(content):
+        for match in combined_re.finditer(content):
             text = content[cursor:match.start()].strip()
             if text:
                 message_blocks.append({"type": "text", "text": text})
-            path, upload_session, filename = match.groups()
-            resource = _resources_from_content(match.group(0))[0]
-            if _IMG_EXT_RE.search(filename):
+            if "/tmp/dashboard-uploads/" in match.group(0):
+                upload_match = _UPLOAD_RE.search(match.group(0))
+                if not upload_match:
+                    cursor = match.end()
+                    continue
+                _path, upload_session, filename = upload_match.groups()
+                resource = _resources_from_content(match.group(0))[0]
+                if _IMG_EXT_RE.search(filename):
+                    message_blocks.append({
+                        "type": "image",
+                        "src": f"/api/sessions/{resource['upload_session']}/uploads/{filename}",
+                        "fname": filename,
+                        "available": resource["available"],
+                    })
+                else:
+                    message_blocks.append({"type": "text", "text": "附件: " + filename})
+            elif "/.claude/channels/telegram/inbox/" in match.group(0):
+                tg_match = _TG_IMAGE_RE.search(match.group(0))
+                if not tg_match:
+                    cursor = match.end()
+                    continue
+                _path, filename = tg_match.groups()
+                resource = _resources_from_content(match.group(0))[0]
                 message_blocks.append({
                     "type": "image",
-                    "src": f"/api/sessions/{resource['upload_session']}/uploads/{filename}",
+                    "src": resource["serve_url"],
                     "fname": filename,
                     "available": resource["available"],
                 })
-            else:
-                message_blocks.append({"type": "text", "text": "附件: " + filename})
             cursor = match.end()
         tail = content[cursor:].strip()
         if tail:
             message_blocks.append({"type": "text", "text": tail})
         if not message_blocks:
             message_blocks = [{"type": "text", "text": content}]
+        # Surface the "this message went to Telegram" delivery marker so the UI
+        # can show a little badge under assistant bubbles that came via the bot.
+        try:
+            metadata = json.loads(m.get("metadata") or "{}")
+        except (TypeError, json.JSONDecodeError):
+            metadata = {}
+        if metadata.get("telegram_reply"):
+            label = "已编辑 Telegram 消息" if metadata.get("telegram_action") == "edit" else "已回复到 Telegram"
+            message_blocks.append({"type": "delivery", "channel": "telegram", "label": label})
         blocks.append({
             "id": m["id"],
             "source_uuid": m["source_uuid"],

@@ -152,6 +152,7 @@ class _NewSessionReq(BaseModel):
     session_type: str = "cc"  # "cc", "shell", "codex", or "opencode"
     cols: int = 80
     rows: int = 24
+    with_telegram: bool = False  # Wire the Telegram MCP channel onto this CC pane
 
 
 def _require_auth_qs(token: Optional[str] = Query(None), authorization: Optional[str] = Header(None)):
@@ -599,15 +600,55 @@ def api_list_dirs(path: str = _HOME, _=Depends(require_auth)):
 
 @app.post("/api/sessions/new")
 def api_sessions_new(req: _NewSessionReq, _=Depends(require_auth)):
+    setting_sources = None
+    if req.with_telegram:
+        # Exactly one CC pane can poll the bot at a time. Strip the old holder
+        # off the channel BEFORE the new one starts polling — otherwise we get
+        # 409 Conflict and the old pane keeps the bot.
+        old_holder = _tm.telegram_holder()
+        if old_holder and old_holder != req.name:
+            snap = _tm._telegram_session_snapshot(old_holder)
+            _tm._rebuild_session(snap, with_telegram=False,
+                                 setting_sources=_tm._isolation_setting_sources(snap["cwd"]))
+    else:
+        # A new session that should NOT own the bot still auto-grabs it if its
+        # cwd's project settings enable the Telegram plugin — then can't deliver
+        # inbound (no channel wiring), and the real holder loses the bot too.
+        # Pin to user settings so it ignores the project's enabledPlugins and
+        # never touches the single-instance bot.
+        setting_sources = _tm._isolation_setting_sources(req.cwd)
     res = _tm.create_session(
         req.name, req.cwd,
         session_type=req.session_type,
         cols=req.cols,
         rows=req.rows,
+        with_telegram=req.with_telegram,
+        setting_sources=setting_sources,
     )
     if not res.get("ok"):
         raise HTTPException(400, res.get("error", "create failed"))
     return res
+
+
+# ── Telegram channel control ──
+
+@app.get("/api/telegram/holder")
+def api_telegram_holder(_=Depends(require_auth)):
+    """Survey of all sessions — who currently owns the bot, who's configured, etc."""
+    return _tm.telegram_status()
+
+
+@app.post("/api/telegram/transfer/{target}")
+def api_telegram_transfer(target: str, _=Depends(require_auth)):
+    """Move the Telegram bot to `target`. Rebuilds the current holder(s) too so
+    exactly one CC session ends up owning the channel."""
+    return _tm.transfer_telegram(target)
+
+
+@app.get("/api/sessions/{name}/telegram-status")
+def api_session_telegram_status(name: str, _=Depends(require_auth)):
+    """Per-session TG state (configured vs actually running)."""
+    return _tm.telegram_session_status(name)
 
 @app.delete("/api/sessions/{name}")
 def api_sessions_kill(name: str, _=Depends(require_auth)):
@@ -744,6 +785,9 @@ def api_sessions_terminal_respond(name: str, req: dict, _=Depends(require_auth))
     keys = req.get("keys") or []
     if not isinstance(keys, list) or not keys:
         return {"ok": False, "error": "missing keys list"}
+    pace = req.get("pace")
+    if isinstance(pace, (int, float)) and 0 <= pace <= 1:
+        return _tm.send_terminal_keys(name, keys, pace=float(pace))
     return _tm.send_terminal_keys(name, keys)
 
 
@@ -929,6 +973,21 @@ def api_sessions_upload_get(name: str, fname: str, _=Depends(_require_auth_qs)):
     if "/" in fname or ".." in fname:
         raise HTTPException(400, "invalid filename")
     path = os.path.join(_UPLOAD_ROOT, name, fname)
+    if not os.path.exists(path):
+        raise HTTPException(404, "not found")
+    return FileResponse(path)
+
+
+_TG_INBOX_DIR = os.path.expanduser("~/.claude/channels/telegram/inbox")
+
+@app.get("/api/telegram/inbox/{fname}")
+def api_telegram_inbox_get(fname: str, _=Depends(_require_auth_qs)):
+    """Serve image files that the Telegram MCP plugin dropped into its inbox.
+    The plugin's bot writes Telegram-side attachments here when paired sessions
+    receive them; the CC JSONL references them by absolute path."""
+    if "/" in fname or ".." in fname:
+        raise HTTPException(400, "invalid filename")
+    path = os.path.join(_TG_INBOX_DIR, fname)
     if not os.path.exists(path):
         raise HTTPException(404, "not found")
     return FileResponse(path)

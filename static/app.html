@@ -905,6 +905,43 @@ section[data-view="settings"][data-sub="appearance"] .st-appearance { display: f
 .ch-bubble.user .ch-delivery-mark {
   background:rgba(77,67,54,0.06); color:rgba(77,67,54,0.5);
 }
+.ch-delivery-mark.is-collapsible {
+  display:block; width:fit-content; max-width:min(100%, 520px); padding:0;
+  border-radius:11px; overflow:hidden; white-space:normal;
+}
+.ch-delivery-head {
+  display:flex; align-items:center; gap:6px; width:100%; max-width:100%;
+  border:0; background:transparent; color:inherit; font:inherit;
+  padding:4px 8px; cursor:pointer; text-align:left; letter-spacing:0;
+}
+.ch-delivery-label {
+  min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.ch-delivery-chevron {
+  flex:0 0 auto; font-size:0.78rem; line-height:1; opacity:0.72;
+  transition:transform 0.15s ease;
+}
+.ch-delivery-mark.expanded .ch-delivery-chevron { transform:rotate(90deg); }
+.ch-delivery-body {
+  border-top:1px solid rgba(66,143,244,0.12); padding:7px 9px 8px;
+  color:rgba(43,73,104,0.82); font-size:0.72rem; line-height:1.45;
+}
+.ch-bubble.user .ch-delivery-body {
+  border-top-color:rgba(77,67,54,0.09); color:rgba(77,67,54,0.62);
+}
+.ch-delivery-meta {
+  display:grid; grid-template-columns:max-content minmax(0, 1fr);
+  column-gap:8px; row-gap:3px; margin-bottom:6px;
+}
+.ch-delivery-meta-row { display:contents; }
+.ch-delivery-meta-key { color:rgba(43,73,104,0.58); }
+.ch-bubble.user .ch-delivery-meta-key { color:rgba(77,67,54,0.44); }
+.ch-delivery-meta-value {
+  min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.ch-delivery-content {
+  white-space:pre-wrap; word-break:break-word;
+}
 .ch-compact-card {
   width:min(94%, 520px); align-self:center; margin:10px 0; border-radius:16px;
   background:rgba(255,255,255,0.58); border:1px solid rgba(0,0,0,0.055); overflow:hidden;
@@ -4543,6 +4580,569 @@ body.sketch .ch-compact-card {
   border: 1.35px solid rgba(51,46,39,0.16);
 }
 
+/* ============================================
+   DARK APPEARANCE — 深夜模式
+   Sketch dark variant + universal overrides (sketch thinker, ask card).
+   Triggered by html[data-appearance="dark"]; JS resolves "auto" against
+   prefers-color-scheme before applying.
+   ============================================ */
+
+/* sketch-pencil THINKING animation — invert pencil to bright cream on dark
+   (applies regardless of theme; thinking-style is orthogonal to theme) */
+html[data-appearance="dark"] .ch-sketch-thinker .sketch-paper {
+  stroke: rgba(255,245,225,0.78);
+  fill: rgba(255,245,225,0.08);
+}
+html[data-appearance="dark"] .ch-sketch-thinker .sketch-paper-echo {
+  stroke: rgba(255,245,225,0.32);
+}
+html[data-appearance="dark"] .ch-sketch-thinker .sketch-line { stroke: rgba(255,245,225,0.92); }
+html[data-appearance="dark"] .ch-sketch-thinker .sketch-pencil {
+  stroke: rgba(255,245,225,0.94);
+  fill: rgba(232,200,135,0.42);
+}
+html[data-appearance="dark"] .ch-sketch-thinker .sketch-pencil-edge { stroke: rgba(255,245,225,0.82); }
+html[data-appearance="dark"] .ch-sketch-thinker .sketch-spark { stroke: rgba(255,245,225,0.72); }
+/* also the inline sketch preview in the settings picker */
+html[data-appearance="dark"] .st-preview-sketch path[stroke="rgba(51,46,39,0.5)"] { stroke: rgba(255,245,225,0.78) !important; }
+html[data-appearance="dark"] .st-preview-sketch path[stroke="rgba(51,46,39,0.58)"] { stroke: rgba(255,245,225,0.92) !important; }
+html[data-appearance="dark"] .st-preview-sketch path[stroke="rgba(51,46,39,0.64)"] { stroke: rgba(255,245,225,0.94) !important; }
+html[data-appearance="dark"] .st-preview-sketch path[fill="rgba(251,248,241,0.46)"] { fill: rgba(255,245,225,0.08) !important; }
+html[data-appearance="dark"] .st-preview-sketch path[fill="rgba(211,184,145,0.24)"] { fill: rgba(232,200,135,0.42) !important; }
+
+/* AskUserQuestion interactive card (.ch-ask-*) — dark */
+html[data-appearance="dark"] body .ch-ask-card {
+  background: linear-gradient(180deg, #1f1a16 0%, #1a1612 100%);
+  border-color: rgba(255,240,220,0.12);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+}
+html[data-appearance="dark"] body .ch-ask-card.answered {
+  background: rgba(255,255,255,0.03);
+  border-color: rgba(255,255,255,0.06);
+}
+html[data-appearance="dark"] body .ch-ask-head { color: #f0e0c8; }
+html[data-appearance="dark"] body .ch-ask-card.answered .ch-ask-head { color: var(--text-mute); }
+html[data-appearance="dark"] body .ch-ask-question { border-top-color: rgba(255,240,220,0.1); }
+html[data-appearance="dark"] body .ch-ask-q-tag {
+  background: rgba(215,131,103,0.22);
+  color: #f0b89c;
+}
+html[data-appearance="dark"] body .ch-ask-q-title { color: #f0e0c8; }
+html[data-appearance="dark"] body .ch-ask-q-hint { color: var(--text-mute); }
+html[data-appearance="dark"] body .ch-ask-opt {
+  background: rgba(255,255,255,0.05);
+  border-color: rgba(255,240,220,0.12);
+  color: #f0e0c8;
+}
+html[data-appearance="dark"] body .ch-ask-opt:hover:not(:disabled) {
+  background: rgba(215,131,103,0.1);
+  border-color: rgba(215,131,103,0.55);
+}
+html[data-appearance="dark"] body .ch-ask-opt-num {
+  background: rgba(255,240,220,0.1);
+  color: #d9c0a0;
+}
+html[data-appearance="dark"] body .ch-ask-opt-desc { color: var(--text-mute); }
+html[data-appearance="dark"] body .ch-ask-opt.picked {
+  background: rgba(215,131,103,0.18);
+  border-color: #d78367;
+  box-shadow: inset 0 0 0 1px rgba(215,131,103,0.55);
+}
+html[data-appearance="dark"] body .ch-ask-opt.picked .ch-ask-opt-num {
+  background: #d78367; color: #1a1612;
+}
+html[data-appearance="dark"] body .ch-ask-opt-check { color: #d78367; }
+html[data-appearance="dark"] body .ch-ask-opt-type {
+  background: rgba(255,255,255,0.025);
+  border-style: dashed;
+}
+html[data-appearance="dark"] body .ch-ask-opt-type .ch-ask-opt-label { color: #d9c0a0; }
+html[data-appearance="dark"] body .ch-ask-type-input input {
+  background: #1a1612;
+  border-color: rgba(255,240,220,0.2);
+  color: var(--text);
+}
+html[data-appearance="dark"] body .ch-ask-type-input input:focus { border-color: #d78367; }
+html[data-appearance="dark"] body .ch-ask-type-send,
+html[data-appearance="dark"] body .ch-ask-submit-btn {
+  background: linear-gradient(135deg, #d78367 0%, #b25a3d 100%);
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.4);
+}
+html[data-appearance="dark"] body .ch-ask-submit-btn:disabled {
+  background: rgba(255,255,255,0.06);
+  color: var(--text-mute);
+  text-shadow: none;
+}
+html[data-appearance="dark"] body .ch-ask-cancel { color: var(--text-mute); }
+
+
+/* ---- Sketch theme (素描稿纸) dark ---- */
+/* Dark pencil sketchbook: charcoal paper, light cream pencil. */
+html[data-appearance="dark"] body.sketch {
+  --bg: #141414;
+  --bg-side: #0c0c0c;
+  --bg-pill: #2a2a2a;
+  --text: #f0e8d8;
+  --text-mute: rgba(240,232,216,0.55);
+  --border: rgba(240,232,216,0.18);
+  --accent: #d3b891;
+  --sketch-paper: #141414;
+  --sketch-paper-soft: #1a1a1a;
+  --sketch-panel: rgba(20,20,20,0.72);
+  --sketch-wash: #262626;
+  --sketch-line: rgba(240,232,216,0.42);
+  --sketch-line-soft: rgba(240,232,216,0.2);
+  --sketch-smudge: rgba(240,232,216,0.07);
+}
+html[data-appearance="dark"].sketch { background: #141414 !important; }
+html[data-appearance="dark"] body.sketch {
+  background:
+    linear-gradient(180deg, rgba(255,250,240,0.025), rgba(255,250,240,0.005)),
+    #141414 !important;
+}
+html[data-appearance="dark"].sketch.sidebar-open,
+html[data-appearance="dark"] body.sketch.sidebar-open { background: #0c0c0c !important; }
+html[data-appearance="dark"] body.sketch::before { background: #141414 !important; }
+html[data-appearance="dark"] body.sketch.sidebar-open::before { background: #0c0c0c !important; }
+html[data-appearance="dark"].sketch.codex-chrome:not(.sidebar-open),
+html[data-appearance="dark"] body.sketch.codex-chrome:not(.sidebar-open) { background: #141414 !important; }
+html[data-appearance="dark"] body.sketch.codex-chrome:not(.sidebar-open)::before { background: #141414 !important; }
+html[data-appearance="dark"] body.sketch::after { opacity: 0.28; mix-blend-mode: screen; }
+
+html[data-appearance="dark"] body.sketch .sidebar {
+  background: rgba(12,12,12,0.94);
+  border-right: 1.5px solid var(--border);
+  box-shadow: inset -1px 0 0 rgba(240,232,216,0.06);
+}
+html[data-appearance="dark"] body.sketch .sb-brand,
+html[data-appearance="dark"] body.sketch .sb-item { color: var(--text); }
+html[data-appearance="dark"] body.sketch .sb-toggle { color: rgba(240,232,216,0.72); }
+html[data-appearance="dark"] body.sketch .sb-toggle:hover { background: var(--sketch-smudge); }
+html[data-appearance="dark"] body.sketch .sb-item:hover { background: rgba(240,232,216,0.05); }
+html[data-appearance="dark"] body.sketch .sb-item.active {
+  background: var(--sketch-wash);
+  box-shadow: inset 0 0 0 1px rgba(240,232,216,0.06);
+}
+html[data-appearance="dark"] body.sketch .sb-foot { color: rgba(240,232,216,0.46); }
+
+html[data-appearance="dark"] body.sketch .ic-btn {
+  background: rgba(30,30,30,0.82); border-color: rgba(240,232,216,0.28); color: var(--text);
+}
+html[data-appearance="dark"] body.sketch .ic-btn:hover { background: rgba(45,45,45,0.92); }
+html[data-appearance="dark"] body.sketch .ic-btn.primary {
+  background: #d3b891; border-color: rgba(240,232,216,0.32); color: #141414;
+}
+html[data-appearance="dark"] body.sketch .ic-btn.primary:hover { background: #c2a47e; }
+
+html[data-appearance="dark"] body.sketch .cd-actions-pill {
+  background: var(--sketch-panel); border-color: rgba(240,232,216,0.24);
+}
+html[data-appearance="dark"] body.sketch .cd-actions-pill .cd-pill-btn:hover { background: rgba(240,232,216,0.06); }
+html[data-appearance="dark"] body.sketch .cl-head { background: rgba(20,20,20,0.92); border-bottom-color: rgba(240,232,216,0.08); }
+html[data-appearance="dark"] body.sketch .cd-head { background: rgba(20,20,20,0.88); border-bottom-color: rgba(240,232,216,0.08); }
+html[data-appearance="dark"] body.sketch .cl-title,
+html[data-appearance="dark"] body.sketch .cd-title { color: var(--text); }
+html[data-appearance="dark"] body.sketch .cd-sub { color: rgba(240,232,216,0.56); }
+html[data-appearance="dark"] body.sketch #chatsView[data-agent-kind="codex"][data-sub="detail"] .cd-head { background: rgba(20,20,20,0.92); }
+html[data-appearance="dark"] body.sketch #chatsView[data-agent-kind="codex"][data-sub="detail"] .cd-head::after {
+  background: linear-gradient(to bottom, rgba(20,20,20,0.82), rgba(20,20,20,0));
+}
+
+html[data-appearance="dark"] body.sketch .cl-search {
+  border-color: rgba(240,232,216,0.22);
+  border-bottom-color: var(--sketch-line-soft);
+  background: rgba(26,26,26,0.58);
+}
+html[data-appearance="dark"] body.sketch .cl-search-icon,
+html[data-appearance="dark"] body.sketch .cl-search-clear,
+html[data-appearance="dark"] body.sketch .cl-search-cancel { color: rgba(240,232,216,0.5); }
+html[data-appearance="dark"] body.sketch .cl-sr-chip,
+html[data-appearance="dark"] body.sketch .cl-resource-row,
+html[data-appearance="dark"] body.sketch .cl-sr-item,
+html[data-appearance="dark"] body.sketch .ch-unified-input,
+html[data-appearance="dark"] body.sketch .ch-detail-search-row input,
+html[data-appearance="dark"] body.sketch .cl-archive-search {
+  background: rgba(26,26,26,0.78);
+  border-color: var(--sketch-line-soft);
+  color: var(--text);
+}
+html[data-appearance="dark"] body.sketch .cl-chip {
+  background: rgba(26,26,26,0.6); border-color: rgba(240,232,216,0.22); color: var(--text);
+}
+html[data-appearance="dark"] body.sketch .cl-chip.active {
+  background: var(--sketch-wash); border-color: rgba(240,232,216,0.24);
+}
+
+html[data-appearance="dark"] body.sketch .cl-card {
+  background: rgba(26,26,26,0.78); border-color: rgba(240,232,216,0.2);
+}
+html[data-appearance="dark"] body.sketch .cl-card:hover { background: rgba(40,40,40,0.86); }
+html[data-appearance="dark"] body.sketch .cl-card .av,
+html[data-appearance="dark"] body.sketch .ch-avatar {
+  background: #262626; border: 1px dashed rgba(240,232,216,0.22); color: rgba(240,232,216,0.82);
+}
+/* per-kind avatar tints — keep candy-color identity, darken backdrop */
+html[data-appearance="dark"] body.sketch .cl-card .av.cc,
+html[data-appearance="dark"] body.sketch .ch-avatar.cc {
+  background: #3a2620;
+  border-color: rgba(232,168,136,0.3);
+  color: #e8a888;
+}
+html[data-appearance="dark"] body.sketch .cl-card .av.codex,
+html[data-appearance="dark"] body.sketch .ch-avatar.codex,
+html[data-appearance="dark"] body.sketch .ch-avatar.opencode {
+  background: #1f2820;
+  border-color: rgba(158,201,149,0.28);
+  color: #9ec995;
+}
+html[data-appearance="dark"] body.sketch .cl-card .av.shell,
+html[data-appearance="dark"] body.sketch .ch-avatar.shell {
+  background: #1c2528;
+  border-color: rgba(142,179,192,0.3);
+  color: #8eb3c0;
+}
+html[data-appearance="dark"] body.sketch .cl-card .av.echo,
+html[data-appearance="dark"] body.sketch .ch-avatar.echo {
+  background: #2a2418;
+  border-color: rgba(217,184,112,0.3);
+  color: #d9b870;
+}
+html[data-appearance="dark"] body.sketch .cl-card .av.opencode {
+  background: #251f2e;
+  border-color: rgba(184,163,216,0.28);
+  color: #b8a3d8;
+}
+
+/* sketch thinking text — settings preview + live in-chat strip */
+html[data-appearance="dark"] .st-preview.sketch-thinking {
+  color: rgba(255,245,225,0.78);
+}
+html[data-appearance="dark"] body[data-thinking-style="sketch"] .ch-tool-group.inflight.thinking-inflight .label {
+  color: rgba(255,245,225,0.78);
+}
+html[data-appearance="dark"] body.sketch .cl-card .summary,
+html[data-appearance="dark"] body.sketch .ch-preview { color: rgba(240,232,216,0.55); }
+
+html[data-appearance="dark"] body.sketch .ch-row .ch-item { border-bottom-color: rgba(240,232,216,0.07); }
+html[data-appearance="dark"] body.sketch .ch-row .ch-item:hover { background: rgba(240,232,216,0.04); }
+html[data-appearance="dark"] body.sketch .ch-row .ch-item:active { background: rgba(240,232,216,0.06); }
+html[data-appearance="dark"] body.sketch .ch-time { color: rgba(240,232,216,0.5); }
+
+html[data-appearance="dark"] body.sketch .ch-bubble.user {
+  background: var(--sketch-wash);
+  border-color: rgba(240,232,216,0.22);
+  box-shadow: 1px 1px 0 rgba(240,232,216,0.05);
+}
+html[data-appearance="dark"] body.sketch .ch-bubble.assistant { color: var(--text); }
+/* sketch dark — message bubble timestamp + ancillary brown text needs lift */
+html[data-appearance="dark"] body.sketch .ch-bubble-time,
+html[data-appearance="dark"] body.sketch .ch-bubble.user .ch-bubble-time { color: rgba(240,232,216,0.5); }
+html[data-appearance="dark"] body.sketch .ch-bubble.user .ch-delivery-meta-key { color: rgba(240,232,216,0.5); }
+html[data-appearance="dark"] body.sketch .ch-delivery-mark { background: rgba(240,232,216,0.06); color: rgba(240,232,216,0.55); }
+html[data-appearance="dark"] body.sketch .ch-delivery-body { border-top-color: rgba(240,232,216,0.1); color: rgba(240,232,216,0.62); }
+html[data-appearance="dark"] body.sketch .ch-pending-state { color: rgba(240,232,216,0.55); }
+html[data-appearance="dark"] body.sketch .ch-pending-action {
+  background: rgba(240,232,216,0.05);
+  border-color: rgba(240,232,216,0.18);
+  color: rgba(240,232,216,0.7);
+}
+html[data-appearance="dark"] body.sketch .ch-msg-actions { color: rgba(240,232,216,0.5); }
+html[data-appearance="dark"] body.sketch .ch-ga-section-label { color: rgba(240,232,216,0.5); }
+html[data-appearance="dark"] body.sketch .ch-terminal-prompt-label { color: rgba(240,232,216,0.72); }
+html[data-appearance="dark"] body.sketch .ch-terminal-prompt-text { color: rgba(240,232,216,0.8); }
+
+html[data-appearance="dark"] body.sketch #chatsView[data-sub="detail"] .cd-actions-pill,
+html[data-appearance="dark"] body.sketch #chatsView[data-sub="detail"] .ch-input-bar {
+  background: rgba(26,26,26,0.86); border-color: rgba(240,232,216,0.2);
+}
+html[data-appearance="dark"] body.sketch #chatsView[data-sub="detail"] .cd-actions-pill .cd-pill-btn { color: var(--text); }
+html[data-appearance="dark"] body.sketch #chatsView[data-sub="detail"] .cd-actions-pill .cd-pill-btn:hover,
+html[data-appearance="dark"] body.sketch #chatsView[data-sub="detail"] .ch-input-btn:hover,
+html[data-appearance="dark"] body.sketch #chatsView[data-sub="detail"] .ch-model-pill:hover { background: rgba(240,232,216,0.06); }
+html[data-appearance="dark"] body.sketch #chatsView[data-sub="detail"] .ch-input,
+html[data-appearance="dark"] body.sketch #chatsView[data-sub="detail"] .ch-input-btn { color: var(--text); }
+html[data-appearance="dark"] body.sketch #chatsView[data-sub="detail"] .ch-input::placeholder { color: rgba(240,232,216,0.4); }
+html[data-appearance="dark"] body.sketch #chatsView[data-sub="detail"] .ch-send-mode { color: rgba(240,232,216,0.66); }
+html[data-appearance="dark"] body.sketch #chatsView[data-sub="detail"] .ch-send-mode.direct {
+  background: rgba(240,232,216,0.1); color: var(--text);
+}
+html[data-appearance="dark"] body.sketch #chatsView[data-sub="detail"] .ch-model-pill { color: rgba(240,232,216,0.66); }
+html[data-appearance="dark"] body.sketch #chatsView[data-sub="detail"] .ch-effort-label { color: rgba(240,232,216,0.54); }
+html[data-appearance="dark"] body.sketch #chatsView[data-sub="detail"] .ch-send {
+  background: #d3b891; color: #141414; border-color: rgba(240,232,216,0.2);
+}
+html[data-appearance="dark"] body.sketch #chatsView[data-sub="detail"] .ch-send:disabled {
+  background: rgba(240,232,216,0.14); color: rgba(240,232,216,0.45);
+}
+
+html[data-appearance="dark"] body.sketch .ch-scroll-bottom {
+  background: rgba(26,26,26,0.9); border-color: rgba(240,232,216,0.24); color: var(--text);
+}
+html[data-appearance="dark"] body.sketch .ch-usage-pill {
+  background: rgba(38,38,38,0.78); border-color: rgba(240,232,216,0.22);
+}
+html[data-appearance="dark"] body.sketch .ch-session-divider-pill { border-color: rgba(240,232,216,0.12); }
+
+html[data-appearance="dark"] body.sketch .ch-code {
+  background: rgba(14,14,14,0.86); border-color: rgba(240,232,216,0.2);
+  box-shadow: 1px 1px 0 rgba(240,232,216,0.04);
+}
+html[data-appearance="dark"] body.sketch .ch-code-head {
+  background: rgba(240,232,216,0.03); border-bottom-color: rgba(240,232,216,0.08); color: var(--text-mute);
+}
+html[data-appearance="dark"] body.sketch .ch-code,
+html[data-appearance="dark"] body.sketch .ch-code .hljs,
+html[data-appearance="dark"] body.sketch .ch-code pre code { color: var(--text); }
+
+html[data-appearance="dark"] body.sketch .ch-file-card.inline {
+  background: rgba(26,26,26,0.78); border-color: rgba(240,232,216,0.2);
+}
+
+html[data-appearance="dark"] body.sketch .ch-process-group { color: rgba(240,232,216,0.78); }
+html[data-appearance="dark"] body.sketch .ch-pg-head { border-bottom-color: rgba(240,232,216,0.18); }
+html[data-appearance="dark"] body.sketch .ch-pg-title::before {
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23f0e8d8' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2 22l4-4'/%3E%3Cpath d='M6 18C8 15.5 10 12 14 8c3-3 6-5 8-6 0 0-1 5-4 9-3 3-6 5-8.5 7C8 19.5 6 18 6 18z'/%3E%3Cpath d='M14 8c-1.5 0-3 .5-4 1.5'/%3E%3C/svg%3E") no-repeat center / contain;
+}
+html[data-appearance="dark"] body.sketch .ch-pg-word { color: rgba(240,232,216,0.78); }
+html[data-appearance="dark"] body.sketch .ch-pg-stat {
+  background: rgba(26,26,26,0.72); border-color: rgba(240,232,216,0.2); color: rgba(240,232,216,0.78);
+}
+html[data-appearance="dark"] body.sketch .ch-pg-stat::after { border-color: rgba(240,232,216,0.08); }
+html[data-appearance="dark"] body.sketch .ch-pg-stat-num { color: rgba(240,232,216,0.85); }
+html[data-appearance="dark"] body.sketch .ch-pg-body { border-left-color: rgba(240,232,216,0.18); }
+html[data-appearance="dark"] body.sketch .ch-pg-body > .ch-tool-group,
+html[data-appearance="dark"] body.sketch .ch-pg-body > .ch-thinking-strip { background: rgba(240,232,216,0.04); }
+html[data-appearance="dark"] body.sketch .ch-tool-group,
+html[data-appearance="dark"] body.sketch .ch-thinking-strip {
+  background: rgba(240,232,216,0.03); border-color: rgba(240,232,216,0.12);
+}
+
+html[data-appearance="dark"] body.sketch .cd-menu,
+html[data-appearance="dark"] body.sketch .cd-model-picker,
+html[data-appearance="dark"] body.sketch .as-group {
+  background: rgba(26,26,26,0.96); border-color: rgba(240,232,216,0.24);
+  box-shadow: 2px 3px 8px rgba(0,0,0,0.5);
+}
+html[data-appearance="dark"] body.sketch .cd-menu-item,
+html[data-appearance="dark"] body.sketch .as-item { color: var(--text); }
+html[data-appearance="dark"] body.sketch .cd-menu-item:hover,
+html[data-appearance="dark"] body.sketch .as-item:active { background: rgba(240,232,216,0.06); }
+html[data-appearance="dark"] body.sketch .cd-menu-sep,
+html[data-appearance="dark"] body.sketch .cd-model-sep,
+html[data-appearance="dark"] body.sketch .as-sep { background: rgba(240,232,216,0.1); }
+
+html[data-appearance="dark"] body.sketch .st-card {
+  background: rgba(26,26,26,0.86); border-color: rgba(240,232,216,0.22);
+}
+html[data-appearance="dark"] body.sketch .st-row,
+html[data-appearance="dark"] body.sketch .st-choice { color: var(--text); }
+html[data-appearance="dark"] body.sketch .st-group-title,
+html[data-appearance="dark"] body.sketch .st-row-note,
+html[data-appearance="dark"] body.sketch .st-row-value,
+html[data-appearance="dark"] body.sketch .st-choice-note { color: var(--text-mute); }
+html[data-appearance="dark"] body.sketch .st-row-icon {
+  background: rgba(211,184,145,0.22); color: #d9bc8e;
+}
+html[data-appearance="dark"] body.sketch .st-choice + .st-choice { border-top-color: rgba(240,232,216,0.07); }
+html[data-appearance="dark"] body.sketch .st-choice-check { border-color: rgba(240,232,216,0.25); }
+html[data-appearance="dark"] body.sketch .st-choice.active .st-choice-check {
+  background: var(--accent); border-color: var(--accent); color: #141414;
+}
+html[data-appearance="dark"] body.sketch .st-usage-plan { background: rgba(240,232,216,0.08); color: rgba(240,232,216,0.7); }
+html[data-appearance="dark"] body.sketch .st-usage-window-label { color: rgba(240,232,216,0.7); }
+html[data-appearance="dark"] body.sketch .st-usage-bar { background: rgba(240,232,216,0.08); }
+html[data-appearance="dark"] body.sketch .st-usage-reset { color: rgba(240,232,216,0.5); }
+html[data-appearance="dark"] body.sketch .st-usage-extra { background: rgba(240,232,216,0.05); color: rgba(240,232,216,0.68); }
+html[data-appearance="dark"] body.sketch .st-usage-name,
+html[data-appearance="dark"] body.sketch .st-usage-window-pct { color: var(--text); }
+
+html[data-appearance="dark"] body.sketch .sb-item:active,
+html[data-appearance="dark"] body.sketch .ch-row .ch-item:active {
+  background: rgba(240,232,216,0.06);
+  box-shadow: inset 0 1px 2px rgba(0,0,0,0.4);
+}
+html[data-appearance="dark"] body.sketch .ic-btn:active { box-shadow: inset 0 1px 3px rgba(0,0,0,0.5); }
+html[data-appearance="dark"] body.sketch .cl-chip:active {
+  background: rgba(240,232,216,0.08); box-shadow: inset 0 1px 2px rgba(0,0,0,0.4);
+}
+
+html[data-appearance="dark"] body.sketch #chatsView[data-agent-kind="codex"] .ch-detail,
+html[data-appearance="dark"] body.sketch #chatsView[data-agent-kind="codex"] .ch-msgs-wrap,
+html[data-appearance="dark"] body.sketch #chatsView[data-agent-kind="codex"] .ch-msgs { background: #141414; }
+
+html[data-appearance="dark"] body.sketch .ch-archive-card {
+  background: rgba(26,26,26,0.72); border-color: rgba(240,232,216,0.2);
+}
+html[data-appearance="dark"] body.sketch .ch-archive-head:active { background: rgba(240,232,216,0.04); }
+html[data-appearance="dark"] body.sketch .ch-archive-icon {
+  background: rgba(38,38,38,0.92); border: 1px dashed rgba(240,232,216,0.22); color: rgba(240,232,216,0.78);
+}
+html[data-appearance="dark"] body.sketch .ch-archive-body,
+html[data-appearance="dark"] body.sketch .ch-unified-search {
+  border-top-color: rgba(240,232,216,0.08); border-bottom-color: rgba(240,232,216,0.08);
+}
+html[data-appearance="dark"] body.sketch .ch-thinking-sheet .ch-ts-panel {
+  background: #1a1a1a; border-color: rgba(240,232,216,0.16);
+  box-shadow: 0 -4px 16px rgba(0,0,0,0.5); color: var(--text);
+}
+html[data-appearance="dark"] body.sketch .ch-thinking-sheet .ch-ts-handle-bar { background: rgba(240,232,216,0.2); }
+html[data-appearance="dark"] body.sketch .ch-compact-card {
+  background: rgba(26,26,26,0.78); border-color: rgba(240,232,216,0.18);
+}
+
+/* sketch dark — code/terminal detail input bar */
+html[data-appearance="dark"] body.sketch .cd-input-bar { background: var(--bg); }
+html[data-appearance="dark"] body.sketch .cd-input-shell {
+  background: rgba(26,26,26,0.92);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.45), 0 0 0 1px rgba(240,232,216,0.1);
+}
+html[data-appearance="dark"] body.sketch .cd-input { color: var(--text); }
+html[data-appearance="dark"] body.sketch .cd-input::placeholder { color: rgba(240,232,216,0.38); }
+html[data-appearance="dark"] body.sketch .cd-input-handle-bar { background: rgba(240,232,216,0.18); }
+html[data-appearance="dark"] body.sketch .cd-input-handle:hover .cd-input-handle-bar,
+html[data-appearance="dark"] body.sketch .cd-input-handle:active .cd-input-handle-bar { background: rgba(240,232,216,0.32); }
+html[data-appearance="dark"] body.sketch .cd-input-side { color: var(--text); }
+html[data-appearance="dark"] body.sketch .cd-input-side:hover { background: rgba(240,232,216,0.08); }
+html[data-appearance="dark"] body.sketch .cd-shortcuts-btn { color: var(--text); }
+html[data-appearance="dark"] body.sketch .cd-att-chip {
+  background: rgba(38,38,38,0.92);
+  box-shadow: 0 0 0 1px rgba(240,232,216,0.12);
+}
+html[data-appearance="dark"] body.sketch .cd-att-chip.is-file { color: var(--text); }
+html[data-appearance="dark"] body.sketch .cd-scroll-bottom {
+  background: rgba(26,26,26,0.82);
+  border-color: rgba(240,232,216,0.18);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.5);
+  color: var(--text);
+}
+html[data-appearance="dark"] body.sketch .cd-shortcuts {
+  background: rgba(26,26,26,0.96);
+  box-shadow: 0 16px 48px rgba(0,0,0,0.6), 0 0 0 1px rgba(240,232,216,0.16);
+}
+html[data-appearance="dark"] body.sketch .cd-shortcut:hover { background: rgba(240,232,216,0.06); }
+html[data-appearance="dark"] body.sketch .cd-shortcut .desc { color: rgba(240,232,216,0.6); }
+html[data-appearance="dark"] body.sketch .code-login {
+  background: rgba(215,131,103,0.12);
+  border-bottom-color: rgba(215,131,103,0.28);
+  color: var(--text);
+}
+html[data-appearance="dark"] body.sketch .code-login-title,
+html[data-appearance="dark"] body.sketch .code-login-close { color: #e8a888; }
+html[data-appearance="dark"] body.sketch .code-login-hint { color: rgba(240,232,216,0.6); }
+html[data-appearance="dark"] body.sketch .code-login-input {
+  background: #1a1a1a; color: var(--text); border-color: rgba(215,131,103,0.32);
+}
+html[data-appearance="dark"] body.sketch .code-recovery {
+  background: rgba(232,200,120,0.1);
+  border-bottom-color: rgba(232,200,120,0.24);
+  color: #e8c878;
+}
+
+/* sketch dark — model picker bottom sheet */
+html[data-appearance="dark"] body.sketch .ch-bs-backdrop { background: rgba(0,0,0,0.55); }
+html[data-appearance="dark"] body.sketch .ch-bs-panel {
+  background: rgba(26,26,26,0.94);
+  box-shadow:
+    inset 0 1px 0 rgba(240,232,216,0.06),
+    0 -10px 38px rgba(0,0,0,0.5);
+  color: var(--text);
+}
+html[data-appearance="dark"] body.sketch .ch-bs-grabber { background: rgba(240,232,216,0.22); }
+html[data-appearance="dark"] body.sketch .ch-bs-label,
+html[data-appearance="dark"] body.sketch .ch-bs-label .ch-bs-chev { color: rgba(240,232,216,0.6); }
+html[data-appearance="dark"] body.sketch .ch-bs-list {
+  background: rgba(240,232,216,0.04);
+  box-shadow: inset 0 1px 0 rgba(240,232,216,0.06), inset 0 0 0 0.5px rgba(240,232,216,0.06);
+}
+html[data-appearance="dark"] body.sketch .ch-bs-item { color: var(--text); }
+html[data-appearance="dark"] body.sketch .ch-bs-item:active { background: rgba(240,232,216,0.08); }
+html[data-appearance="dark"] body.sketch .ch-bs-item .ch-bs-desc { color: rgba(240,232,216,0.6); }
+html[data-appearance="dark"] body.sketch #chModelSheet.codex-mode .ch-bs-backdrop { background: rgba(0,0,0,0.5); }
+html[data-appearance="dark"] body.sketch #chModelSheet.codex-mode .ch-bs-panel {
+  background: rgba(26,26,26,0.96);
+  border: 1px solid rgba(240,232,216,0.1);
+}
+html[data-appearance="dark"] body.sketch #chModelSheet.codex-mode .ch-bs-list {
+  background: rgba(240,232,216,0.04);
+  box-shadow: inset 0 0 0 1px rgba(240,232,216,0.08);
+}
+html[data-appearance="dark"] body.sketch #chModelSheet.codex-mode .ch-bs-item.active .ch-bs-check { color: var(--text); }
+
+/* sketch pencil-after frame inversion */
+html[data-appearance="dark"] body.sketch .ic-btn::after,
+html[data-appearance="dark"] body.sketch .cd-actions-pill::after,
+html[data-appearance="dark"] body.sketch .cl-search::after,
+html[data-appearance="dark"] body.sketch .cl-chip::after,
+html[data-appearance="dark"] body.sketch .cl-card::after,
+html[data-appearance="dark"] body.sketch .ch-input-bar::after,
+html[data-appearance="dark"] body.sketch .ch-archive-card::after,
+html[data-appearance="dark"] body.sketch .st-card::after,
+html[data-appearance="dark"] body.sketch .ch-code::after,
+html[data-appearance="dark"] body.sketch .ch-file-card.inline::after,
+html[data-appearance="dark"] body.sketch .ch-tool-group::after,
+html[data-appearance="dark"] body.sketch .ch-thinking-strip::after,
+html[data-appearance="dark"] body.sketch .ch-compact-card::after {
+  border-color: rgba(240,232,216,0.16);
+  box-shadow:
+    1px 0 0 rgba(240,232,216,0.04),
+    -1px 1px 0 rgba(0,0,0,0.22);
+}
+
+/* sketch dark — new-session / dir-picker modal */
+html[data-appearance="dark"] body.sketch .modal-bg { background: rgba(0,0,0,0.65); }
+html[data-appearance="dark"] body.sketch .modal {
+  background: #1a1a1a;
+  color: var(--text);
+  border: 1.4px solid rgba(240,232,216,0.2);
+  box-shadow: 2px 3px 8px rgba(0,0,0,0.5);
+}
+html[data-appearance="dark"] body.sketch .modal label { color: rgba(240,232,216,0.62); }
+html[data-appearance="dark"] body.sketch .modal input[type=text] {
+  background: #0e0e0e; color: var(--text); border-color: rgba(240,232,216,0.2);
+}
+html[data-appearance="dark"] body.sketch .modal input[type=text]:focus { border-color: var(--accent); }
+html[data-appearance="dark"] body.sketch .dir-picker {
+  background: #0e0e0e; border-color: rgba(240,232,216,0.2);
+}
+html[data-appearance="dark"] body.sketch .dir-crumbs {
+  background: rgba(240,232,216,0.04);
+  border-bottom-color: rgba(240,232,216,0.12);
+  color: rgba(240,232,216,0.6);
+}
+html[data-appearance="dark"] body.sketch .dir-crumbs .crumb { color: var(--text); }
+html[data-appearance="dark"] body.sketch .dir-list .dir-item {
+  border-bottom-color: rgba(240,232,216,0.06);
+}
+html[data-appearance="dark"] body.sketch .dir-list .dir-item:hover { background: rgba(240,232,216,0.05); }
+html[data-appearance="dark"] body.sketch .dir-cur {
+  background: rgba(240,232,216,0.03);
+  border-top-color: rgba(240,232,216,0.12);
+  color: rgba(240,232,216,0.6);
+}
+html[data-appearance="dark"] body.sketch .dir-cur code { color: var(--accent); }
+html[data-appearance="dark"] body.sketch .btn-primary {
+  background: linear-gradient(135deg, #d3b891 0%, #b8956d 100%);
+  border-color: rgba(240,232,216,0.16);
+  color: #1a1a1a;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.45);
+  text-shadow: none;
+}
+html[data-appearance="dark"] body.sketch .btn-secondary {
+  background: var(--bg-pill); color: var(--text);
+}
+
+@media (max-width: 720px) {
+  html[data-appearance="dark"] body.sketch .m-topbar {
+    background: rgba(12,12,12,0.94); border-bottom-color: rgba(240,232,216,0.1);
+  }
+  html[data-appearance="dark"] body.sketch .m-topbar .m-burger {
+    background: rgba(26,26,26,0.82); border-color: rgba(240,232,216,0.2); color: var(--text);
+  }
+}
+
+
+
 </style>
 </head>
 <body class="sketch">
@@ -4774,6 +5374,31 @@ body.sketch .ch-compact-card {
           </div>
         </div>
         <div class="st-body">
+          <div class="st-group-title">外观模式</div>
+          <div class="st-card">
+            <button class="st-choice" type="button" data-appearance-choice="auto" onclick="setAppearance('auto')">
+              <span class="st-choice-info">
+                <span class="st-choice-title">跟随系统</span>
+                <span class="st-choice-note">浅色 / 深色随系统切换</span>
+              </span>
+              <span class="st-choice-check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><polyline points="20 6 9 17 4 12"/></svg></span>
+            </button>
+            <button class="st-choice" type="button" data-appearance-choice="light" onclick="setAppearance('light')">
+              <span class="st-choice-info">
+                <span class="st-choice-title">浅色</span>
+                <span class="st-choice-note">素描稿纸 · 浅色</span>
+              </span>
+              <span class="st-choice-check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><polyline points="20 6 9 17 4 12"/></svg></span>
+            </button>
+            <button class="st-choice" type="button" data-appearance-choice="dark" onclick="setAppearance('dark')">
+              <span class="st-choice-info">
+                <span class="st-choice-title">深色</span>
+                <span class="st-choice-note">炭黑纸 · 米色铅笔</span>
+              </span>
+              <span class="st-choice-check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><polyline points="20 6 9 17 4 12"/></svg></span>
+            </button>
+          </div>
+
           <div class="st-group-title">Theme</div>
           <div class="st-card">
             <button class="st-choice" type="button" data-theme-choice="sketch" onclick="setTheme('sketch')">
@@ -5119,6 +5744,7 @@ body.sketch .ch-compact-card {
       <div class="dir-cur">当前：<code id="dirCur">~</code></div>
     </div>
     <input type="hidden" id="ns-cwd" value="~">
+    <label class="row" id="ns-tg-row"><input type="checkbox" id="ns-tg"> 接入 Telegram plugin</label>
     <div class="modal-err" id="ns-err"></div>
     <div class="modal-actions">
       <button class="btn-secondary" onclick="closeNewSessionModal()">取消</button>
@@ -5250,8 +5876,18 @@ function updateThemeChrome() {
   document.documentElement.classList.toggle('codex-chrome', Boolean(codexDetail));
   document.body.classList.toggle('codex-chrome', Boolean(codexDetail));
   const meta = document.getElementById('metaThemeColor');
-  if (meta) {
-    meta.setAttribute('content', opened ? '#f2ede5' : '#f7f4ef');
+  const isDark = document.documentElement.getAttribute('data-appearance') === 'dark';
+  const nextColor = isDark
+    ? (opened ? '#0c0c0c' : '#141414')
+    : (opened ? '#f2ede5' : '#f7f4ef');
+  if (meta && meta.getAttribute('content') !== nextColor) {
+    // iOS Safari sometimes ignores dynamic <meta theme-color> attribute changes
+    // (especially on light↔dark flips). Replace the node to force a re-read.
+    const fresh = document.createElement('meta');
+    fresh.setAttribute('name', 'theme-color');
+    fresh.setAttribute('id', 'metaThemeColor');
+    fresh.setAttribute('content', nextColor);
+    meta.parentNode.replaceChild(fresh, meta);
   }
 }
 
@@ -5288,6 +5924,53 @@ function setTheme(theme) {
 }
 
 applyTheme(readTheme(), false);
+
+/* --- Appearance (light / dark / auto, orthogonal to theme) --- */
+const APPEARANCE_KEY = 'prism:appearance';
+const APPEARANCE_VALUES = { light: '浅色', dark: '深色', auto: '跟随系统' };
+const _appearanceMQL = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)');
+
+function readAppearance() {
+  try {
+    const saved = localStorage.getItem(APPEARANCE_KEY);
+    return APPEARANCE_VALUES[saved] ? saved : 'light';
+  } catch (e) { return 'light'; }
+}
+
+function resolveAppearance(mode) {
+  if (mode === 'dark') return 'dark';
+  if (mode === 'light') return 'light';
+  // auto
+  return (_appearanceMQL && _appearanceMQL.matches) ? 'dark' : 'light';
+}
+
+function applyAppearance(mode, persist) {
+  const next = APPEARANCE_VALUES[mode] ? mode : 'light';
+  const effective = resolveAppearance(next);
+  document.documentElement.setAttribute('data-appearance', effective);
+  document.documentElement.setAttribute('data-appearance-pref', next);
+  if (persist) {
+    try { localStorage.setItem(APPEARANCE_KEY, next); } catch (e) {}
+  }
+  document.querySelectorAll('.st-choice[data-appearance-choice]').forEach(el => {
+    el.classList.toggle('active', el.getAttribute('data-appearance-choice') === next);
+  });
+  const value = document.getElementById('stAppearanceModeValue');
+  if (value) value.textContent = APPEARANCE_VALUES[next];
+  if (typeof updateThemeChrome === 'function') updateThemeChrome();
+}
+
+function setAppearance(mode) {
+  applyAppearance(mode, true);
+}
+
+if (_appearanceMQL && _appearanceMQL.addEventListener) {
+  _appearanceMQL.addEventListener('change', () => {
+    if (readAppearance() === 'auto') applyAppearance('auto', false);
+  });
+}
+
+applyAppearance(readAppearance(), false);
 
 const THINKING_APPEARANCE_KEY = 'prism:thinking-appearance';
 const THINKING_APPEARANCE_LABELS = {
@@ -5425,6 +6108,7 @@ function openAppearanceSettings() {
   const view = document.getElementById('settingsView');
   if (view) view.setAttribute('data-sub', 'appearance');
   applyTheme(readTheme(), false);
+  applyAppearance(readAppearance(), false);
   applyThinkingAppearance(readThinkingAppearance(), false);
 }
 
@@ -6673,6 +7357,9 @@ function renderDirPicker(path, dirs) {
 }
 
 function applyTypeToggle() {
+  const isCC = document.getElementById('ns-type-cc').checked;
+  const tgRow = document.getElementById('ns-tg-row');
+  if (tgRow) tgRow.style.display = isCC ? '' : 'none';
 }
 
 document.addEventListener('change', (e) => {
@@ -6698,6 +7385,9 @@ async function createSession() {
   const name = document.getElementById('ns-name').value.trim();
   const cwd = document.getElementById('ns-cwd').value.trim();
   const sessionType = document.querySelector('input[name="ns-type"]:checked').value;
+  // TG channel is only meaningful for Claude sessions (the plugin tools surface
+  // only there). For other session_types we just always send false.
+  const withTg = sessionType === 'cc' && document.getElementById('ns-tg').checked;
   const errEl = document.getElementById('ns-err');
   errEl.textContent = '';
   if (!name || !cwd) { errEl.textContent = '名字和目录都要填'; return; }
@@ -6706,7 +7396,7 @@ async function createSession() {
     const r = await fetch(API + '/sessions/new', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + TOKEN },
-      body: JSON.stringify({ name, cwd, session_type: sessionType, cols, rows }),
+      body: JSON.stringify({ name, cwd, session_type: sessionType, cols, rows, with_telegram: withTg }),
     });
     const data = await r.json();
     if (r.ok) {
