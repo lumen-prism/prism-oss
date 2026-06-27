@@ -5558,6 +5558,11 @@ html[data-appearance="dark"] body.sketch .btn-secondary {
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 113 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
           Rename
         </div>
+        <div class="cd-menu-item cc-only" id="cdMenuTg" onclick="menuTransferTelegram()">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2m4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 0 0-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.74-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38"/></svg>
+          Telegram
+          <span class="cd-menu-badge" id="cdMenuTgBadge"></span>
+        </div>
         <div class="cd-menu-sep"></div>
         <div class="cd-menu-item" onclick="menuArchive()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8"/><line x1="10" y1="13" x2="14" y2="13"/></svg>
@@ -7508,6 +7513,93 @@ function toggleDetailMenu() {
   if (mp) mp.style.display = 'none';
   if (ep) ep.style.display = 'none';
   m.style.display = m.style.display === 'none' ? 'block' : 'none';
+  // Refresh the Telegram-holder badge whenever the menu opens so it reflects
+  // who's actually polling right now (could've moved between sessions).
+  if (m.style.display === 'block') refreshTelegramStatus();
+}
+
+// ===== Telegram channel (transfer holder + status badge) =====
+//
+// The plugin's getUpdates is single-consumer per token; at most one CC pane
+// owns the bot at a time. The menu shows where the bot currently lives and
+// lets you yank it over to the current session.
+
+let _tgHolder = null;
+let _tgConfiguredHolder = null;
+let _tgSessions = [];
+
+async function refreshTelegramStatus() {
+  try {
+    const r = await fetch(API + '/telegram/holder', { headers: { Authorization: 'Bearer ' + TOKEN } });
+    if (!r.ok) return;
+    const d = await r.json();
+    _tgHolder = d.holder || null;
+    _tgConfiguredHolder = d.configured_holder || null;
+    _tgSessions = Array.isArray(d.sessions) ? d.sessions : [];
+    _updateTgMenuBadge();
+  } catch (e) {}
+}
+
+function _telegramStateFor(session) {
+  const item = _tgSessions.find(x => x.session === session);
+  if (item && item.running) return 'connected';
+  if ((item && item.configured) || _tgConfiguredHolder === session) return 'configured';
+  return 'none';
+}
+
+function _updateTelegramBadge(badge, session) {
+  if (!badge) return;
+  const state = _telegramStateFor(session);
+  if (state === 'connected') {
+    badge.textContent = '● 已连接';
+    badge.style.color = '#6a8a5a';
+  } else if (state === 'configured') {
+    badge.textContent = '● 启动中/异常';
+    badge.style.color = '#b97938';
+  } else {
+    badge.textContent = _tgHolder ? '挂在 ' + _tgHolder : '';
+    badge.style.color = '';
+  }
+}
+
+function _updateTgMenuBadge() {
+  const badge = document.getElementById('cdMenuTgBadge');
+  if (badge && typeof activeSession !== 'undefined') _updateTelegramBadge(badge, activeSession);
+}
+
+async function menuTransferTelegram() {
+  closeDetailMenu();
+  if (!activeSession) return;
+  await refreshTelegramStatus();
+  // Use the actually-running holder (not just --channels presence): a session
+  // can be configured with the channel arg while its bun poller has crashed
+  // (configured-but-not-running) — in that case "transfer to here" effectively
+  // re-runs it under the current pane.
+  if (_tgHolder === activeSession) {
+    alert('Telegram 已经挂在这个 session 上并正常运行，无需转移。');
+    return;
+  }
+  let msg;
+  if (_tgConfiguredHolder === activeSession) {
+    msg = 'Telegram 配置在这个 session 上，但服务已掉线。重新拉起？\n（会短暂重启，对话不丢）';
+  } else {
+    const from = _tgHolder || _tgConfiguredHolder || '当前无人在跑';
+    msg = '把 Telegram 接管到 ' + activeSession + '？\n来源：' + from + '\n相关 session 会短暂重启（对话不丢）。';
+  }
+  if (!confirm(msg)) return;
+  try {
+    const r = await fetch(API + '/telegram/transfer/' + encodeURIComponent(activeSession), {
+      method: 'POST', headers: { Authorization: 'Bearer ' + TOKEN },
+    });
+    const d = await r.json();
+    if (d.ok) {
+      await refreshTelegramStatus();
+      alert('Telegram 已转移到 ' + activeSession);
+      if (typeof loadSessions === 'function') loadSessions();
+    } else {
+      alert('转移失败: ' + (d.error || r.status));
+    }
+  } catch (e) { alert('网络错误'); }
 }
 function closeDetailMenu() {
   const m = document.getElementById('cdMenu');
